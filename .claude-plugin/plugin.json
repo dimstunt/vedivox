@@ -1,0 +1,9 @@
+{
+  "name": "vedivox",
+  "description": "Ask about your Vedivox meetings, get help during a call from its live text, and give a meeting a title and a timestamped description. Needs the Vedivox app and its vedivox command.",
+  "author": { "name": "Dmitrii Cherkashin", "url": "https://github.com/dimstunt" },
+  "homepage": "https://github.com/dimstunt/vedivox",
+  "repository": "https://github.com/dimstunt/vedivox",
+  "license": "GPL-3.0-or-later",
+  "keywords": ["meetings", "transcription", "macos"]
+}

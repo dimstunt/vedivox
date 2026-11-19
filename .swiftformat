@@ -1,0 +1,48 @@
+# SwiftFormat — conservative profile: normalize whitespace/idioms without
+# fighting the existing style. Run on save via the Claude Code PostToolUse hook.
+
+--swiftversion 6.0
+
+--exclude Vedivox/build,VedivoxMCP/.build,transcribe-bench/.build,.venv
+
+# Match existing style
+--indent 4
+--xcodeindentation enabled
+--maxwidth none
+--commas always
+--semicolons never
+--stripunusedargs closure-only
+
+# Opinionated / semantic rules that would churn the diff or rewrite code — off
+# indent/braces: hand-indented SQL literals and `-> T {` on its own line are
+# deliberate style in the Storage layer — not worth 600 lines of churn.
+--disable indent
+--disable braces
+--disable wrapMultilineStatementBraces
+--disable wrapIfStatementBodies
+--disable wrapLoopBodies
+--disable wrapPropertyBodies
+--disable wrapFunctionBodies
+--disable swiftTestingTestCaseNames
+--disable noForceUnwrapInTests
+--disable redundantSelf
+--disable hoistAwait
+--disable hoistTry
+--disable hoistPatternLet
+--disable docComments
+--disable environmentEntry
+--disable redundantRawValues
+--disable preferKeyPath
+--disable enumNamespaces
+--disable extensionAccessControl
+--disable redundantType
+--disable numberFormatting
+--disable blankLinesAtStartOfScope
+--disable blankLinesAtEndOfScope
+--disable unusedArguments
+--disable trailingClosures
+--disable redundantReturn
+--disable sortImports
+--disable anyObjectProtocol
+--disable redundantOptionalBinding
+--disable conditionalAssignment

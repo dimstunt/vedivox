@@ -1,0 +1,57 @@
+name: Bug report
+description: Something in Vedivox does not work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not attach recordings, transcripts or the database.** They hold other people's
+        voices and words, and this tracker is public. Logs mention meeting titles and speaker
+        names too: read them before you attach them, and redact what you need to.
+  - type: input
+    id: version
+    attributes:
+      label: Vedivox version
+      description: Settings → About, or `vedivox status`.
+      placeholder: 0.4.2 (1234)
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: macOS 15.3
+    validations:
+      required: true
+  - type: input
+    id: chip
+    attributes:
+      label: Mac and chip
+      placeholder: MacBook Air, M2, 16 GB
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you did
+      description: Steps that lead to the problem, as exact as you can.
+      placeholder: |
+        1. Started a recording from the menu bar during a Zoom call
+        2. Stopped it after 10 minutes
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened instead
+    validations:
+      required: true
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Logs
+      description: |
+        `vedivox feedback` packs the logs, the app and macOS versions and `vedivox status` into a zip on
+        your Desktop — never the database or audio. The logs do contain meeting titles and
+        speaker names: open the zip, check it, then attach it here or paste the relevant lines.
+        Logs alone: Settings → Storage → Logs → Open Folder.

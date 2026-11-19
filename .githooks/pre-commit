@@ -1,0 +1,45 @@
+#!/bin/sh
+# Pre-commit gate: run the headless logic suite (VedivoxCoreTests) — no app, no slow
+# scenario bench — when core or VedivoxCoreTests Swift changed, and the VedivoxMCP package
+# tests when VedivoxMCP Swift changed. Doc/backlog commits aren't slowed.
+# Bypass when needed with:  git commit --no-verify
+#
+# Enable (once per clone):  git config core.hooksPath .githooks
+
+ROOT="$(git rev-parse --show-toplevel)"
+
+# Renames and deletions count too: `git mv` of a core file with an edit in it
+# used to pass without a test run.
+STAGED=$(git diff --cached --name-only --diff-filter=ACMRD)
+CHANGED=$(echo "$STAGED" | grep -E '^Vedivox/Vedivox/(Models|Services)/.*\.swift$|^Vedivox/VedivoxCoreTests/.*\.swift$' || true)
+CHANGED_MCP=$(echo "$STAGED" | grep -E '^VedivoxMCP/.*\.swift$' || true)
+
+# The CLI and MCP package has its own suite (swift test, seconds once built).
+if [ -n "$CHANGED_MCP" ]; then
+  echo "[pre-commit] running VedivoxMCP tests…"
+  if ! make -C "$ROOT" test-mcp >/dev/null 2>&1; then
+    echo "[pre-commit] ❌ VedivoxMCP tests FAILED — commit blocked. See: make test-mcp"
+    echo "             Fix the tests, or bypass with:  git commit --no-verify"
+    exit 1
+  fi
+  echo "[pre-commit] ✓ VedivoxMCP tests passed"
+fi
+
+if [ -z "$CHANGED" ]; then
+  echo "[pre-commit] no core / VedivoxCoreTests Swift changes — skipping VedivoxCoreTests"
+  exit 0
+fi
+
+echo "[pre-commit] running headless VedivoxCoreTests…"
+
+# `make test` regenerates the Xcode project and builds with derivedData under
+# ~/Library/Caches (repo lives in TCC-protected ~/Documents — xctest bundles
+# built there fail to load under `git commit`).
+if ! make -C "$ROOT" test; then
+  echo ""
+  echo "[pre-commit] ❌ VedivoxCoreTests FAILED — commit blocked."
+  echo "             Fix the tests, or bypass with:  git commit --no-verify"
+  exit 1
+fi
+
+echo "[pre-commit] ✓ VedivoxCoreTests passed"

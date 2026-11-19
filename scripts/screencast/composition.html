@@ -1,0 +1,285 @@
+<!doctype html>
+<!--
+  The Vedivox screencast and the landing loops as one page.
+  Nothing here runs on a clock: every pixel is a function of the time given to
+  SC.seek(t), so render.py can draw frame N at exactly N / fps.
+
+  ?v=film|hero|live            what to draw (film: 16:9 with captions; the rest: bare loops)
+  &theme=dark|light            loops only, the film is dark
+  &frames=<url>                PNGs of `make screencast-frames`
+  &refs=<url>                  Vedivox/VedivoxSnapshotTests/__Snapshots__/ScreenSnapshotTests
+
+  shortcut: fonts come from Google Fonts at render time, vendor them if a render must work offline.
+-->
+<meta charset="utf-8">
+<title>Vedivox screencast</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geologica:wght@500;600;700&family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#0c0e12; --win:#121419; --bar:#1d2028; --line:#3b434d;
+  --fg:#f4f3e0; --muted:#9fa094; --me:#e2cc47; --rec:#f84b4b; --term:#0f1115;
+  --paper:#f4f3e0; --ink:#111419;
+  --display:"Geologica","Onest",system-ui,sans-serif;
+  --body:"Onest",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--body)}
+img{display:block}
+#stage{position:relative;width:100vw;height:100vh;overflow:hidden}
+
+/* ---------- film ---------- */
+.scene{position:absolute;inset:0;display:none;place-items:center;padding:6vw 0 9vw}
+.cap{position:absolute;inset:auto 0 0 0;height:9vw;display:grid;place-items:center;text-align:center;padding-inline:4vw;font:500 2.25vw/1.25 var(--display)}
+.brand{position:absolute;left:50%;top:0;transform-origin:50% 0}
+.brand svg{height:3.4vw}
+.cap svg{height:.83em;vertical-align:-.011em}
+.win{width:84vw;border-radius:1.1vw;overflow:hidden;background:var(--win);border:1px solid var(--line);box-shadow:0 2vw 5vw rgb(0 0 0 / .5)}
+.bar{height:2.5vw;display:flex;align-items:center;gap:.55vw;padding-inline:1vw;background:var(--bar);border-bottom:1px solid var(--line);font:500 1.1vw/1 var(--body);color:var(--muted)}
+.bar i{width:.9vw;height:.9vw;border-radius:50%;background:var(--line);flex:none}
+.bar span{margin-inline:auto;padding-right:4vw}
+.pair{position:relative;overflow:hidden}
+.pair img{width:100%}
+.pair img + img{position:absolute;inset:0 0 auto 0}
+.win.live{width:74vw}
+.bar .rec{display:inline-block;margin-right:.6vw;background:var(--rec)}
+.tty{background:var(--term);padding:2vw 2.4vw;min-height:22vw;font:400 1.6vw/1.75 var(--mono);white-space:pre-wrap}
+.tty .cmd{color:var(--me)}
+.caret{display:inline-block;width:.55em;height:1.05em;margin-left:.12em;vertical-align:text-bottom;background:currentColor}
+.s-tr .win{width:80vw}
+.shot{position:relative;overflow:hidden}
+.shot.tr{aspect-ratio:2360/1100}
+.shot.sp{aspect-ratio:2000/700}
+.zoom{position:relative}
+.ring{position:absolute;border:.24vw solid var(--me);border-radius:.7vw;opacity:0}
+.ring.search{left:51.2%;top:19.4%;width:20.6%;height:5.2%}
+.win.doc{width:60vw;translate:0 -4.5vw}
+.paper{background:var(--paper);color:var(--ink);min-height:19vw;padding:2vw 2.6vw;font:400 1.65vw/1.5 var(--body)}
+.paper b{display:block;font:600 2.1vw/1.2 var(--display);margin-bottom:.9vw}
+.keys{position:absolute;top:8vw;left:5vw;display:flex;gap:.6vw}
+.keys kbd{display:grid;place-items:center;min-width:3.6vw;height:3.6vw;padding-inline:.8vw;border:1px solid var(--line);border-bottom-width:.35vw;border-radius:.7vw;background:var(--bar);font:500 1.7vw/1 var(--body);color:var(--fg)}
+.hud{position:absolute;left:50%;bottom:10.5vw;translate:-50% 0;filter:drop-shadow(0 1.2vw 2.4vw rgb(0 0 0 / .55))}
+.claims{display:flex;flex-direction:column;align-items:center;gap:.7vw;font:700 4.3vw/1.08 var(--display);letter-spacing:-.015em}
+.url{position:absolute;left:0;right:0;top:31.5vw;text-align:center;font:400 1.5vw/1 var(--mono);color:var(--muted)}
+
+/* ---------- loops: the bare screen, exactly the landing's frame ---------- */
+.loop{position:absolute;inset:0;overflow:hidden}
+</style>
+
+<div id="stage"></div>
+
+<script>
+const query = new URLSearchParams(location.search);
+const VARIANT = query.get('v') || 'film';
+const THEME = VARIANT === 'film' ? 'dark' : (query.get('theme') || 'dark');
+const frame = name => `${query.get('frames')}/frame.${name}.png`;
+const ref = name => `${query.get('refs')}/${name}.png`;
+
+const clamp = x => Math.min(1, Math.max(0, x));
+const seg = (p, a, b) => 1 - (1 - clamp((p - a) / (b - a))) ** 3;
+const smooth = (p, a, b) => { const x = clamp((p - a) / (b - a)); return x * x * (3 - 2 * x); };
+const bump = (p, a, b, c, d) => Math.min(seg(p, a, b), 1 - seg(p, c, d));
+const pad = (n, width) => String(n).padStart(width, '0');
+const $ = id => document.getElementById(id);
+const stage = $('stage');
+
+// An image changes only through show(), so a seek can wait until every new one is decoded.
+let pending = [];
+function show(img, src) {
+  if (img.dataset.src === src) return;
+  img.dataset.src = src;
+  img.src = src;
+  pending.push(img.decode().catch(() => {}));
+}
+// Two stacked images: `from` below, `to` above at opacity `mix`.
+function blend(pair, from, to, mix) {
+  const [below, above] = pair.children;
+  show(below, from);
+  show(above, to);
+  above.style.opacity = mix;
+}
+const typed = (text, amount) => text.slice(0, Math.round(clamp(amount) * text.length));
+const caret = t => (Math.floor(t * 2) % 2 ? 'hidden' : 'visible');
+
+const QUESTION = 'What did Clara just ask?';
+const COMMAND = '$ vedivox live --last 3m';
+const ANSWER = 'Clara asked whether you can still ship on Thursday if the review slips a day. Speaker 2 said it depends on the migration, and you said it finished this morning.';
+const DICTATED = 'Thursday works for us. The migration is done, I checked the row counts this morning.';
+const HERO_FRAMES = 120, HUD_WORDS = 15;
+
+// Live text by a schedule of [when, step, dissolve]: each step comes in over its dissolve.
+function liveStep(pair, theme, schedule, now) {
+  let k = 0;
+  while (k + 1 < schedule.length && now >= schedule[k + 1][0]) k++;
+  const [at, step, dissolve] = schedule[k];
+  const before = schedule[Math.max(0, k - 1)][1];
+  blend(pair, frame(`live_${theme}_${before}`), frame(`live_${theme}_${step}`), k === 0 ? 1 : clamp((now - at) / dissolve));
+}
+
+// ---------- film ----------
+// The name: the mark stands where the V would, without the icon's plate, as in all Vedivox lettering.
+// A copy of docs/images/vedivox-wordmark-dark.svg — redraw there, then paste here.
+const WORD = `<svg viewBox="-2 -52 683.1 154"><path d="M11 -22.4L49.7 56.5" fill="none" stroke="#e2cc47" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/><path d="M116.9 -22.4L78.1 56.5" fill="none" stroke="#f4f3e0" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/><circle cx="63.9" cy="85.3" r="14.7" fill="#f84b4b"/><path d="M124.5 50H202.5A39 39 0 1 0 192.8 75.7" fill="none" stroke="#f4f3e0" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/><circle cx="276.5" cy="50" r="39" fill="none" stroke="#f4f3e0" stroke-width="22"/><path d="M315.5 -39V89" fill="none" stroke="#f4f3e0" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/><path d="M359.5 11V89" fill="none" stroke="#f4f3e0" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/><circle cx="359.5" cy="-21.2" r="14.7" fill="#f84b4b"/><path d="M395.5 11L433.8 89L472.1 11" fill="none" stroke="#f4f3e0" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/><circle cx="535.1" cy="50" r="39" fill="none" stroke="#f4f3e0" stroke-width="22"/><path d="M604.1 11L668.1 89M668.1 11L604.1 89" fill="none" stroke="#f4f3e0" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const DOTS = '<i></i><i></i><i></i>';
+
+function film() {
+  stage.innerHTML = `
+    <div class="scene"></div>
+    <div class="scene"><div class="win live"><div class="bar">${DOTS}<span><i class="rec"></i>Recording</span></div>
+      <div class="pair" id="f-live"><img><img></div></div></div>
+    <div class="scene"><div class="win"><div class="bar">${DOTS}<span>Claude Code — your assistant</span></div>
+      <div class="tty">› <span id="f-q"></span><i class="caret" id="f-qc"></i>\n<span class="cmd" id="f-cmd"></span>\n\n<span id="f-a"></span></div></div></div>
+    <div class="scene s-tr"><div class="win"><div class="bar">${DOTS}</div>
+      <div class="shot tr"><div class="zoom" id="f-trz"><div class="pair" id="f-tr"><img><img></div><span class="ring search" id="f-ring"></span></div></div></div></div>
+    <div class="scene"><div class="win"><div class="bar">${DOTS}</div>
+      <div class="shot sp"><div class="zoom" id="f-spz"><img id="f-sp" style="width:100%"></div></div></div></div>
+    <div class="scene"><div class="keys" id="f-keys"><kbd>⌘</kbd><kbd>⇧</kbd><kbd>2</kbd></div>
+      <div class="win doc"><div class="bar">${DOTS}<span>Notes</span></div><div class="paper"><b>Reply to Clara</b><span id="f-doc"></span><i class="caret" id="f-dc"></i></div></div>
+      <img class="hud" id="f-hud"></div>
+    <div class="scene"><div class="claims" id="f-claims"><span>No account.</span><span>No cloud.</span><span>No bot in the call.</span></div><div class="url" id="f-url">vedivox.com</div></div>
+    <div class="brand" id="f-brand">${WORD}</div>
+    <div class="cap" id="f-cap"></div>`;
+  const scenes = [...stage.querySelectorAll('.scene')];
+  const claims = [...$('f-claims').children];
+
+  const S = [
+    {d: 2, cap: [[0, 'Your meetings stay on your Mac.']]},
+    {d: 7, cap: [[0, 'It records the call and writes it down while people talk.']]},
+    {d: 8, cap: [[0, 'Ask your assistant what was just said.']]},
+    {d: 6, cap: [[0, 'Afterwards: the whole call, by speaker.'], [.56, 'Search finds the moment.']]},
+    {d: 4, cap: [[0, 'Voices it has met get their names.']]},
+    {d: 5, cap: [[0, '⌘⇧2 anywhere: speak, and the text lands at your cursor.']]},
+    {d: 4, cap: [[0, ''], [.5, 'Vedivox sends your meetings nowhere. Free and open source.']]},
+  ];
+  const starts = [];
+  let total = 0;
+  for (const scene of S) { starts.push(total); total += scene.d; }
+  const DISSOLVE = .3;
+
+  const draw = [
+    () => {},
+    p => {
+      liveStep($('f-live'), 'dark', [[0, 0, 1], [.06, 1, .036], [.2, 2, .036], [.34, 3, .036], [.54, 4, .036], [.72, 5, .036]], p);
+    },
+    (p, t) => {
+      $('f-q').textContent = typed(QUESTION, (p - .03) / .17);
+      $('f-qc').style.visibility = p < .24 ? caret(t) : 'hidden';
+      $('f-cmd').textContent = p >= .26 ? COMMAND : '';
+      $('f-a').textContent = typed(ANSWER, (p - .36) / .3);
+    },
+    p => {
+      // The playhead walks through the first lines, then the same screen with a search.
+      const index = Math.min(HERO_FRAMES - 1, Math.floor(clamp(p / .54) * 52));
+      blend($('f-tr'), frame(`hero_dark_${pad(index, 3)}`), frame('hero_dark_search'), seg(p, .56, .62));
+      $('f-ring').style.opacity = bump(p, .62, .7, .95, 1);
+    },
+    p => {
+      show($('f-sp'), ref('testSpeakers.speakers_ink_dark'));
+      $('f-spz').style.transform = `scale(${1 + .04 * p})`;
+      $('f-spz').style.transformOrigin = '0% 40%';
+    },
+    (p, t) => {
+      $('f-keys').style.opacity = seg(p, .02, .1);
+      const hud = $('f-hud');
+      show(hud, frame(`hud_${pad(Math.round(clamp((p - .16) / .54) * HUD_WORDS), 2)}`));
+      hud.style.opacity = bump(p, .08, .16, .74, .8);
+      $('f-doc').textContent = p > .78 ? DICTATED : '';
+      $('f-dc').style.visibility = caret(t);
+    },
+    p => {
+      claims.forEach((line, i) => { line.style.opacity = seg(p, .02 + .08 * i, .12 + .08 * i); });
+      $('f-claims').style.opacity = 1 - seg(p, .4, .5);
+      $('f-url').style.opacity = seg(p, .62, .75);
+    },
+  ];
+
+  return {
+    duration: total,
+    seek(t) {
+      S.forEach((scene, i) => {
+        const start = starts[i], end = start + scene.d;
+        // Scenes dissolve into each other: the outgoing one fades while the next comes up.
+        const alpha = clamp((t - start) / DISSOLVE) * (i === S.length - 1 ? 1 : 1 - clamp((t - end) / DISSOLVE));
+        const visible = (alpha > 0 || (i === 0 && t < DISSOLVE)) && t < end + DISSOLVE;
+        scenes[i].style.display = visible ? 'grid' : 'none';
+        if (!visible) return;
+        scenes[i].style.opacity = i === 0 ? 1 - clamp((t - end) / DISSOLVE) : alpha;
+        draw[i](clamp((t - start) / scene.d), t);
+      });
+      // The mark and the name: large in the middle, then at the top for the whole film, back at the end.
+      let size = 1, alpha = 1;
+      if (t < S[0].d) { const p = t / S[0].d; alpha = seg(p, 0, .25); size = smooth(p, .5, 1); }
+      const last = S.length - 1;
+      if (t >= starts[last]) { const p = (t - starts[last]) / S[last].d; size = 1 - smooth(p, .5, .72); }
+      const brand = $('f-brand');
+      brand.style.translate = `-50% ${17.5 * (1 - size) + 1.2 * size}vw`;
+      brand.style.scale = 3.2 - 2.2 * size;
+      brand.style.opacity = alpha;
+      // Captions come up in a fifth of a second.
+      let text = '', since = 0;
+      S.forEach((scene, i) => {
+        for (const [from, caption] of scene.cap) {
+          const at = starts[i] + from * scene.d;
+          if (t >= at) { text = caption; since = t - at; }
+        }
+      });
+      const cap = $('f-cap');
+      cap.innerHTML = `<span>${text.replace('Vedivox', WORD)}</span>`;
+      cap.style.opacity = clamp(since / .2);
+    },
+    layout() {
+      // The HUD is as wide as its draft makes it; one pixel of it is one pixel of a 1920 frame.
+      const hud = $('f-hud');
+      if (hud.naturalWidth) hud.style.width = `${hud.naturalWidth / 19.2}vw`;
+    },
+  };
+}
+
+// ---------- loops ----------
+// A loop opens on its most telling frame and comes back to it: that frame is the poster the page
+// shows before the video plays and instead of it under reduced motion (render.py saves it).
+function heroLoop() {
+  stage.innerHTML = '<div class="loop pair" id="l"><img><img></div>';
+  // From the second line playing to the end, a dissolve to the start, and on to the second line.
+  const duration = 8, first = 30, rate = HERO_FRAMES / 7.5, toEnd = (HERO_FRAMES - first) / rate, dissolve = .5;
+  const still = index => frame(`hero_${THEME}_${pad(index, 3)}`);
+  return {
+    duration,
+    seek(t) {
+      if (t < toEnd) blend($('l'), still(first + Math.floor(t * rate)), still(0), 0);
+      else if (t < toEnd + dissolve) blend($('l'), still(HERO_FRAMES - 1), still(0), (t - toEnd) / dissolve);
+      else blend($('l'), still(Math.min(first - 1, Math.floor((t - toEnd - dissolve) * rate))), still(0), 0);
+    },
+  };
+}
+
+function liveLoop() {
+  stage.innerHTML = '<div class="loop pair" id="l"><img><img></div>';
+  // Three lines fit the landing's frame whole, so the loop stops at the names (step 4).
+  return {
+    duration: 8,
+    seek(t) {
+      liveStep($('l'), THEME, [[0, 4, 1], [1.4, 0, .5], [2.6, 1, .25], [3.7, 2, .25], [4.8, 3, .25], [6.2, 4, .25]], t);
+    },
+  };
+}
+
+const made = ({film, hero: heroLoop, live: liveLoop}[VARIANT])();
+const frames2 = () => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+
+window.SC = {
+  duration: made.duration,
+  ready: Promise.all([
+    document.fonts.load('600 20px Geologica'), document.fonts.load('700 20px Geologica'), document.fonts.load('500 20px Geologica'),
+    document.fonts.load('400 20px Onest'), document.fonts.load('500 20px Onest'), document.fonts.load('600 20px Onest'),
+    document.fonts.load('400 20px "JetBrains Mono"'),
+  ]).then(() => document.fonts.ready),
+  async seek(t) {
+    pending = [];
+    made.seek(t);
+    await Promise.all(pending);
+    if (made.layout) made.layout();
+    await frames2();
+  },
+};
+</script>

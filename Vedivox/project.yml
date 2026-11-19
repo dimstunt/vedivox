@@ -1,0 +1,213 @@
+name: Vedivox
+options:
+  bundleIdPrefix: com.dimstunt
+  deploymentTarget:
+    macOS: "14.4"
+  xcodeVersion: "16.0"
+  generateEmptyDirectories: true
+
+packages:
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio.git
+    # Pinned exactly so SPM can't silently jump majors; bumps go through the
+    # deterministic bench gate (make bench, the bench notes); 0.18.3 also pinned the
+    # model revisions in ModelPins.
+    exactVersion: "0.18.3"
+  GRDB:
+    url: https://github.com/groue/GRDB.swift.git
+    from: "7.0.0"
+  # Snapshot tests for the dictation HUD.
+  # The panel is a pure function of four values, so rendering it to a PNG and
+  # diffing catches layout regressions that otherwise need a human with a
+  # screenshot — which is how the clipped second line was found the first time.
+  SnapshotTesting:
+    url: https://github.com/pointfreeco/swift-snapshot-testing.git
+    from: "1.17.0"
+  # Global hotkeys for dictation. Wraps Carbon RegisterEventHotKey, which is the
+  # one Carbon API Apple never replaced — and, unlike an event tap, it needs no
+  # TCC permission at all (verified: a bundle with zero grants fired 3/3 times
+  # from the background).
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts.git
+    from: "3.0.0"
+
+# The author's Apple Development team: the one place it is written. Every
+# target inherits it, and the Makefile reads it from here (AUTHOR_TEAM).
+settings:
+  base:
+    DEVELOPMENT_TEAM: 7N46KFP24D
+
+targets:
+  VedivoxTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - VedivoxTests
+    dependencies:
+      - target: Vedivox
+      - package: GRDB
+        product: GRDB
+      - package: SnapshotTesting
+        product: SnapshotTesting
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.4"
+        GENERATE_INFOPLIST_FILE: true
+        CODE_SIGN_IDENTITY: "Apple Development"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Vedivox.app/Contents/MacOS/Vedivox"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+  # Smoke UI tests (XCUITest) over the main user paths — `make test-smoke`.
+  # They drive a Debug build of the app pointed at a throwaway data directory
+  # (VEDIVOX_DATA_DIR), seeded from the test; the 30 s mic fixture gives the
+  # player something to seek.
+  VedivoxUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - VedivoxUITests
+      - path: VedivoxCoreTests/TestResources/test_mic_30s.wav
+        buildPhase: resources
+    dependencies:
+      - target: Vedivox
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.4"
+        GENERATE_INFOPLIST_FILE: true
+        PRODUCT_BUNDLE_IDENTIFIER: com.dimstunt.VedivoxUITests
+        CODE_SIGN_IDENTITY: "Apple Development"
+        TEST_TARGET_NAME: Vedivox
+
+  # Headless diarization benchmark bundle: compiles the UI-free core (Models +
+  # Services) directly, so it runs WITHOUT hosting in Vedivox.app (no TEST_HOST).
+  # Its own target/scheme keeps the slow bench out of the normal logic-test suite.
+  # FileImporter is excluded — the one core file that references AppState (UI).
+  VedivoxBench:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - VedivoxBench
+      - Vedivox/Models
+      - path: Vedivox/Services
+        excludes:
+          - Import/FileImporter.swift
+    dependencies:
+      - package: FluidAudio
+      - package: GRDB
+        product: GRDB
+      # Same reason as VedivoxCoreTests: this target compiles Vedivox/Services wholesale,
+      # which includes Dictation/, so the hotkey package has to link even though
+      # no benchmark registers a shortcut.
+      - package: KeyboardShortcuts
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.4"
+        GENERATE_INFOPLIST_FILE: true
+        PRODUCT_BUNDLE_IDENTIFIER: com.dimstunt.VedivoxBench
+        CODE_SIGN_IDENTITY: "Apple Development"
+
+  # Headless logic-test bundle: the fast unit suite. Compiles the UI-free core
+  # (Models + Services, minus FileImporter) directly, so it runs WITHOUT the app
+  # (no TEST_HOST). Tests reference core types in-module (no `@testable import`).
+  # Data folders inside VedivoxCoreTests/ are bundled as resources. Only the 2 genuinely
+  # UI-coupled tests stay in the hosted VedivoxTests target.
+  VedivoxCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - VedivoxCoreTests
+      - Vedivox/Models
+      - path: Vedivox/Services
+        excludes:
+          - Import/FileImporter.swift
+      # The one view model the gate tests (ListenViewModelTests): it needs
+      # nothing outside Models and Services.
+      - Vedivox/ViewModels/ListenViewModel.swift
+      # The view sources as a folder resource, not compiled: DesignSystemLiteralTests
+      # scans them, and under `git commit` the test process cannot read ~/Documents.
+      - path: Vedivox/Views
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - package: FluidAudio
+      - package: GRDB
+        product: GRDB
+      # This target compiles Vedivox/Services wholesale, which now includes
+      # Dictation/ — so it needs the hotkey package to link even though no test
+      # registers a shortcut.
+      - package: KeyboardShortcuts
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.4"
+        GENERATE_INFOPLIST_FILE: true
+        PRODUCT_BUNDLE_IDENTIFIER: com.dimstunt.VedivoxCoreTests
+        CODE_SIGN_IDENTITY: "Apple Development"
+
+  # Offscreen snapshots of the main screens in every palette × theme
+  # `make test-snapshots`. Unhosted on purpose: a hosted bundle
+  # runs inside Vedivox.app, which opens a window, activates, takes the data
+  # directory lock and shares the com.dimstunt.Vedivox defaults with the installed
+  # app. Here there is no app process at all; the app sources compile into the
+  # bundle (minus VedivoxApp.swift and its @main), defaults are the xctest tool's,
+  # data goes to the Vedivox-tests directory, and views render to bitmaps without
+  # ever reaching the screen.
+  VedivoxSnapshotTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - VedivoxSnapshotTests
+      - path: Vedivox
+        excludes:
+          - VedivoxApp.swift
+          - Info.plist
+          - Vedivox.entitlements
+          - Assets.xcassets
+    dependencies:
+      - package: FluidAudio
+      - package: GRDB
+        product: GRDB
+      - package: KeyboardShortcuts
+      - package: SnapshotTesting
+        product: SnapshotTesting
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.4"
+        GENERATE_INFOPLIST_FILE: true
+        PRODUCT_BUNDLE_IDENTIFIER: com.dimstunt.VedivoxSnapshotTests
+        CODE_SIGN_IDENTITY: "Apple Development"
+
+  Vedivox:
+    type: application
+    platform: macOS
+    sources:
+      - Vedivox
+      # Opened from Help → Vedivox Guide / What's New; one source of truth in the repo.
+      - path: ../docs/GUIDE.md
+        buildPhase: resources
+      - path: ../CHANGELOG.md
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.dimstunt.Vedivox
+        PRODUCT_NAME: Vedivox
+        PRODUCT_MODULE_NAME: Vedivox
+        MARKETING_VERSION: "0.5.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.4"
+        ENABLE_HARDENED_RUNTIME: true
+        ENABLE_APP_SANDBOX: false
+        DEAD_CODE_STRIPPING: true
+        CODE_SIGN_IDENTITY: "Apple Development"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_ENTITLEMENTS: Vedivox/Vedivox.entitlements
+    dependencies:
+      - package: FluidAudio
+      - package: GRDB
+        product: GRDB
+      - package: KeyboardShortcuts

@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vedivox — meeting recorder for Mac, transcribed on-device</title>
+<meta name="description" content="Vedivox records your calls, transcribes them on your Mac and labels who said what. Free software, macOS 14.4+ on Apple Silicon, 25 European languages.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://vedivox.com/">
+<meta property="og:title" content="Vedivox">
+<meta property="og:description" content="Your meetings stay on your Mac. Your own assistant can work with them.">
+<meta property="og:image" content="https://vedivox.com/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Vedivox. Your meetings stay on your Mac. Your own assistant can work with them.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="assets/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<style>
+/* Layout: every section spans one 68rem column; text sits left, its companion (screenshot, card, list) right, and stacks on a phone. Palette and type come from the app (Ink palette, SF Pro / SF Mono). */
+:root {
+  /* Ink palette, light (Vedivox/Vedivox/DesignSystem/Color+Vedivox.swift) */
+  --bg: oklch(0.92 0.02 103);
+  --surface: oklch(0.945 0.015 103);
+  --fg: oklch(0.22 0.012 265);
+  --fg-2: oklch(0.4 0.02 265);
+  --line: oklch(0.8 0.025 103);
+  --accent: oklch(0.83 0.16 95);
+  --accent-text: oklch(0.42 0.09 85);
+  --rec: oklch(0.48 0.21 25);
+  --focus: oklch(0.5 0.14 220);
+  /* The mark's own colours, the same in both themes */
+  --ink: oklch(0.16 0.012 265);
+
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+
+  --step--1: clamp(0.875rem, 0.84rem + 0.15vw, 0.95rem);
+  --step-0: clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem);
+  --step-1: clamp(1.2rem, 1.08rem + 0.55vw, 1.5rem);
+  --step-2: clamp(1.6rem, 1.3rem + 1.3vw, 2.4rem);
+  --step-3: clamp(2.3rem, 1.6rem + 3vw, 4.2rem);
+  --space-section: clamp(4rem, 2.5rem + 6vw, 8rem);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: oklch(0.19 0.012 265);
+    --surface: oklch(0.235 0.016 265);
+    --fg: oklch(0.88 0.02 103);
+    --fg-2: oklch(0.7 0.025 103);
+    --line: oklch(0.32 0.018 265);
+    --accent: oklch(0.84 0.15 100);
+    --accent-text: oklch(0.84 0.15 100);
+    --rec: oklch(0.66 0.21 25);
+    --focus: oklch(0.8 0.11 200);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: oklch(0.19 0.012 265);
+  --surface: oklch(0.235 0.016 265);
+  --fg: oklch(0.88 0.02 103);
+  --fg-2: oklch(0.7 0.025 103);
+  --line: oklch(0.32 0.018 265);
+  --accent: oklch(0.84 0.15 100);
+  --accent-text: oklch(0.84 0.15 100);
+  --rec: oklch(0.66 0.21 25);
+  --focus: oklch(0.8 0.11 200);
+  color-scheme: dark;
+}
+:root[data-theme="light"] { color-scheme: light; }
+
+*, *::before, *::after { box-sizing: border-box; min-width: 0; }
+:root {
+  scrollbar-gutter: stable;
+  text-wrap: pretty;
+  overflow-wrap: break-word;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 400 var(--step-0)/1.55 var(--sans);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  overflow-x: clip;
+}
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+p, ul, dl, dd, figure { margin: 0; }
+img, svg, video { display: block; max-width: 100%; height: auto; }
+a { color: inherit; text-decoration-color: color-mix(in oklch, currentColor 40%, transparent); text-underline-offset: 0.18em; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
+code, kbd { font-family: var(--mono); font-size: 0.88em; }
+
+.page {
+  max-inline-size: 68rem;
+  margin-inline: auto;
+  display: grid;
+  row-gap: var(--space-section);
+  padding-block: 1.5rem 3rem;
+}
+
+/* Header */
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem 2rem; }
+.brand { display: block; color: var(--fg); }
+.brand svg { inline-size: 9rem; }
+
+/* An assistant exchange, drawn as a terminal session */
+.chat { display: grid; gap: 0.9rem; align-content: start; padding: 1.25rem 1.4rem; border-radius: 0.9rem; background: var(--ink); color: oklch(0.88 0.02 103); font: 400 var(--step--1)/1.55 var(--mono); }
+.chat p { margin: 0; }
+.chat .you::before { content: "> "; color: #e2cc47; }
+.chat .tool { color: oklch(0.7 0.025 103); }
+.chat .tool::before { content: "$ "; color: oklch(0.75 0.17 145); }
+.chat .answer { font-family: var(--sans); font-size: var(--step-0); }
+.chat .note { font-family: var(--sans); color: oklch(0.6 0.02 103); }
+.top nav { margin-inline-start: auto; display: flex; flex-wrap: wrap; gap: 0.25rem 1.5rem; font-size: var(--step--1); }
+.top nav a { color: var(--fg-2); text-decoration: none; padding-block: 0.4rem; }
+@media (hover: hover) and (pointer: fine) { .top nav a:hover { color: var(--fg); } }
+.top nav a:active { color: var(--fg); }
+
+/* Hero: text, then the app window close below it */
+.hero { display: grid; gap: clamp(2rem, 1.5rem + 2vw, 3rem); }
+.hero-text { display: grid; gap: 1.25rem; }
+.hero h1 { font-size: var(--step-3); line-height: 1.04; letter-spacing: -0.035em; font-weight: 700; }
+.hero h1 span { display: block; color: var(--fg-2); }
+.lede { font-size: var(--step-1); line-height: 1.45; color: var(--fg-2); max-inline-size: 40ch; }
+.status-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.5rem; }
+.cta { padding: 0.55rem 1.1rem; border-radius: 0.6rem; background: var(--accent); color: var(--ink); font-weight: 600; text-decoration: none; }
+@media (hover: hover) and (pointer: fine) { .cta:hover { background: color-mix(in oklch, var(--accent) 88%, var(--fg)); } }
+.cta:active { background: color-mix(in oklch, var(--accent) 76%, var(--fg)); }
+.facts { display: flex; flex-wrap: wrap; gap: 0.3rem 1.25rem; padding: 0; list-style: none; font-size: var(--step--1); color: var(--fg-2); }
+
+/* Screenshots: a window frame with one still per theme. A silent loop lies over its still in the same grid cell; it starts and ends on that frame, so the still is its poster and what reduced motion shows. */
+.window { display: grid; border: 1px solid var(--line); border-radius: 0.8rem; overflow: clip; background: var(--surface); box-shadow: 0 1.5rem 3rem -1.5rem color-mix(in oklch, var(--ink) 40%, transparent); }
+.window::before {
+  content: "";
+  grid-area: 1 / 1;
+  block-size: 1.75rem;
+  border-block-end: 1px solid var(--line);
+  background:
+    radial-gradient(circle at 1rem 50%, oklch(0.7 0.17 25) 0.3rem, transparent 0.32rem),
+    radial-gradient(circle at 1.9rem 50%, oklch(0.82 0.15 85) 0.3rem, transparent 0.32rem),
+    radial-gradient(circle at 2.8rem 50%, oklch(0.75 0.17 145) 0.3rem, transparent 0.32rem),
+    var(--surface);
+}
+.window > * { grid-area: 2 / 1; inline-size: 100%; aspect-ratio: var(--crop, auto); object-fit: cover; object-position: top left; }
+@media (prefers-reduced-motion: reduce) { .window video { visibility: hidden; } }
+.window .dark { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .window .dark { display: block; }
+  :root:not([data-theme="light"]) .window .light { display: none; }
+}
+:root[data-theme="dark"] .window .dark { display: block; }
+:root[data-theme="dark"] .window .light { display: none; }
+
+/* Sections */
+section { display: grid; gap: 2rem; }
+section h2 { font-size: var(--step-2); line-height: 1.12; letter-spacing: -0.025em; font-weight: 700; }
+.muted { color: var(--fg-2); }
+.split { display: flex; flex-wrap: wrap; gap: 2.5rem 4rem; align-items: center; }
+.split > .text { flex: 1 1 28rem; display: grid; gap: 1.25rem; }
+.split > .side { flex: 1.3 1 26rem; display: grid; gap: 1.5rem; }
+.split.top-aligned { align-items: start; }
+
+/* You and the call: the sign with one stroke lit, as a legend */
+.tracks { display: grid; gap: 1.5rem; padding: 0; list-style: none; }
+.tracks li { display: grid; grid-template-columns: 2.75rem 1fr; gap: 0.15rem 1.1rem; align-items: center; }
+.tracks svg { inline-size: 2.75rem; grid-row: span 2; }
+.tracks strong { font-weight: 600; }
+.tracks span { color: var(--fg-2); font-size: var(--step--1); }
+
+/* Privacy */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 0.9rem; padding: clamp(1.25rem, 1rem + 1vw, 1.75rem); display: grid; gap: 1rem; }
+.card h3 { font-size: var(--step-0); font-weight: 600; }
+.card ul { display: grid; gap: 0.8rem; padding-inline-start: 1.1rem; color: var(--fg-2); font-size: var(--step--1); }
+.card li::marker { color: var(--rec); }
+
+/* Command line */
+/* Two columns where they fit; the 1px gaps show the container's colour as hairlines */
+.commands { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); gap: 1px; border: 1px solid var(--line); border-radius: 0.9rem; background: var(--line); overflow: clip; }
+.commands div { display: grid; gap: 0.3rem; align-content: start; padding: 0.9rem 1.2rem; background: var(--surface); }
+.commands dt { font-family: var(--mono); font-size: var(--step--1); overflow-x: auto; white-space: nowrap; }
+.commands dt::before { content: "$ "; color: var(--fg-2); }
+.commands dd { color: var(--fg-2); font-size: var(--step--1); }
+
+/* What else it does */
+.more { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); gap: 2rem 3rem; }
+.more div { display: grid; gap: 0.4rem; align-content: start; }
+.more h3 { font-size: var(--step-1); font-weight: 600; letter-spacing: -0.01em; }
+.more p { color: var(--fg-2); }
+kbd.key { font-family: var(--sans); font-weight: 600; font-size: 0.95em; padding: 0 0.4rem 0.05rem; border: 1px solid var(--line); border-block-end-width: 2px; border-radius: 0.4rem; background: var(--surface); white-space: nowrap; }
+
+/* Get it */
+pre { margin: 0; padding: 1rem 1.2rem; overflow-x: auto; border: 1px solid var(--line); border-radius: 0.9rem; background: var(--surface); font: 400 var(--step--1)/1.6 var(--mono); }
+.facts-list { display: grid; gap: 1.25rem; }
+.facts-list div { display: grid; gap: 0.3rem; }
+.facts-list dt { font-weight: 600; }
+.facts-list dd { color: var(--fg-2); font-size: var(--step--1); }
+.facts-list ul { padding-inline-start: 1.1rem; display: grid; gap: 0.25rem; }
+details summary { cursor: pointer; font-weight: 600; }
+details p { margin-block-start: 0.4rem; }
+
+footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; padding-block-start: 2rem; border-block-start: 1px solid var(--line); font-size: var(--step--1); color: var(--fg-2); }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="top">
+  <a class="brand" href="#" aria-label="Vedivox">
+    <!-- The sign stands in for the first letter, without its plate: docs/images/vedivox-wordmark-*.svg (scripts/app_icon.py) with the text colour -->
+    <svg viewBox="-2 -52 683.1 154" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"><path d="M11 -22.4L49.7 56.5" stroke="#e2cc47"/><path d="M116.9 -22.4L78.1 56.5"/><path d="M124.5 50H202.5A39 39 0 1 0 192.8 75.7"/><circle cx="276.5" cy="50" r="39"/><path d="M315.5 -39V89"/><path d="M359.5 11V89"/><path d="M395.5 11L433.8 89L472.1 11"/><circle cx="535.1" cy="50" r="39"/><path d="M604.1 11L668.1 89M668.1 11L604.1 89"/></g><circle cx="63.9" cy="85.3" r="14.7" fill="#f84b4b"/><circle cx="359.5" cy="-21.2" r="14.7" fill="#f84b4b"/></svg>
+  </a>
+  <nav aria-label="Sections">
+    <a href="#privacy">Privacy</a>
+    <a href="#assistant">Your assistant</a>
+    <a href="#speakers">Speakers</a>
+    <a href="#get">Get it</a>
+  </nav>
+</header>
+
+<div class="hero">
+  <div class="hero-text">
+    <h1>Your meetings stay on your Mac. <span>Your own assistant can work with them.</span></h1>
+    <p class="lede">Vedivox records your calls, transcribes them and works out who said what, all on your Mac. Claude Code or any other MCP client can then search them, follow a call while it is still going and write the summary. No account, no cloud, no bot in the call.</p>
+    <div class="status-line">
+      <a class="cta" href="#get">Get Vedivox</a>
+      <ul class="facts">
+        <li>Free software, GPL-3.0-or-later</li>
+        <li>macOS 14.4+, Apple Silicon</li>
+        <li>25 European languages</li>
+      </ul>
+    </div>
+  </div>
+  <figure class="window">
+    <img class="light" src="assets/hero-light.png" width="2360" height="1100" alt="A meeting in Vedivox: the player with a waveform coloured by speaker, the transcript line by line with each speaker’s name, and a description on the right">
+    <img class="dark" src="assets/hero-dark.png" width="2360" height="1100" alt="A meeting in Vedivox: the player with a waveform coloured by speaker, the transcript line by line with each speaker’s name, and a description on the right">
+    <video class="light" src="assets/hero-light.mp4" width="2360" height="1100" autoplay muted loop playsinline aria-hidden="true"></video>
+    <video class="dark" src="assets/hero-dark.mp4" width="2360" height="1100" autoplay muted loop playsinline aria-hidden="true"></video>
+  </figure>
+</div>
+
+<section id="privacy" aria-labelledby="privacy-h">
+  <div class="split top-aligned">
+    <div class="text">
+      <h2 id="privacy-h">Vedivox sends your meetings nowhere</h2>
+      <p>Recording, transcription and speaker recognition run on the Mac’s Neural Engine. Audio, transcripts, voice profiles and the database stay in <code>~/Library/Application Support/Vedivox/</code>.</p>
+      <p>There is no account, no telemetry, no analytics and no crash reporting. Vedivox calls no cloud or AI service, and nothing in it listens on the network. It records what your Mac plays and hears, so no bot joins the call.</p>
+      <p class="muted">The app is not sandboxed, so this is a property of the code, not something macOS enforces. The <a href="https://github.com/dimstunt/vedivox">source is on GitHub</a>.</p>
+      <p class="muted">In many places, recording a conversation needs the consent of everyone in it. Vedivox does not tell the other people that it is recording. Asking them is up to you.</p>
+    </div>
+    <div class="card side">
+      <h3>What does touch the network</h3>
+      <ul>
+        <li>On first launch the speech models, about 1.2&nbsp;GB, are downloaded once from Hugging Face. After that Vedivox works offline.</li>
+        <li>Once a day it asks GitHub whether a newer version is out. Nothing about you is sent, and you can turn it off in Settings.</li>
+        <li>Importing from a link runs <code>yt-dlp</code>, which you install yourself and which contacts the video site.</li>
+        <li>Whatever your assistant reads through <code>vedivox</code> goes to the model that assistant uses. That is your choice of assistant, not Vedivox.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="assistant" aria-labelledby="assistant-h">
+  <div class="split">
+    <div class="text">
+      <h2 id="assistant-h">Ask your assistant what was just said</h2>
+      <p>While a meeting records, Vedivox keeps a live text of it. The <code>vedivox</code> command gives your assistant that text and every past meeting: it can answer a question mid-call, find what someone said last month, rename a speaker or write a meeting’s title and description.</p>
+      <p class="muted">Vedivox itself calls no language model, so without an assistant there are transcripts but no summaries. The release zip includes three Claude Code skills, <code>/vedivox</code>, <code>/vedivox-live</code> and <code>/vedivox-enrich</code>, and other MCP clients can use the <code>vedivox-mcp</code> server.</p>
+    </div>
+    <div class="chat side" role="img" aria-label="An example in Claude Code: the user asks what Clara just asked, the assistant runs vedivox live and answers">
+      <p class="you">What did Clara just ask?</p>
+      <p class="tool">vedivox live --last 3m</p>
+      <p class="answer">Clara asked whether you can still ship on Thursday if the review slips a day. Speaker 2 said it depends on the migration, and you said it finished this morning.</p>
+      <p class="note">Example on made-up meeting data</p>
+    </div>
+  </div>
+  <figure class="window">
+    <img class="light" src="assets/live-light.png" width="1520" height="520" loading="lazy" alt="Live text of a recording in progress: lines from Clara Meyer, Speaker 2 and You">
+    <img class="dark" src="assets/live-dark.png" width="1520" height="520" loading="lazy" alt="Live text of a recording in progress: lines from Clara Meyer, Speaker 2 and You">
+    <video class="light" src="assets/live-light.mp4" width="1520" height="520" autoplay muted loop playsinline aria-hidden="true"></video>
+    <video class="dark" src="assets/live-dark.mp4" width="1520" height="520" autoplay muted loop playsinline aria-hidden="true"></video>
+  </figure>
+  <dl class="commands">
+    <div><dt>vedivox live --last 5m</dt><dd>The last five minutes of the call in progress</dd></div>
+    <div><dt>vedivox search "beta list"</dt><dd>Every transcript line that mentions it</dd></div>
+    <div><dt>vedivox transcript 3f2a --json</dt><dd>A whole transcript with speakers and times, for a script</dd></div>
+    <div><dt>vedivox speaker rename …</dt><dd>Name a voice; later meetings use the name</dd></div>
+  </dl>
+</section>
+
+<section id="speakers" aria-labelledby="speakers-h">
+  <div class="split">
+    <div class="text">
+      <h2 id="speakers-h">Voices it has met get their names</h2>
+      <p>Vedivox records two tracks at once: your microphone, and the system audio of the call. Zoom, Google Meet, Microsoft Teams, Yandex Telemost or anything else that plays sound.</p>
+      <p class="muted">A new voice shows up as Speaker&nbsp;N until you name it; after that Vedivox recognizes it in later meetings. Move a line to the right person or merge two speakers, and reprocessing keeps your fixes.</p>
+    </div>
+    <ul class="tracks side">
+      <li>
+        <svg viewBox="233 222 558 582" aria-hidden="true"><g fill="none" stroke-width="96" stroke-linecap="round"><path d="M281 270L450 614" stroke="#e2cc47"/><path d="M743 270L574 614" stroke="currentColor" opacity="0.2"/></g><circle cx="512" cy="740" r="64" fill="#f84b4b"/></svg>
+        <strong>Your microphone</strong>
+        <span>Your side of the call, labelled as you</span>
+      </li>
+      <li>
+        <svg viewBox="233 222 558 582" aria-hidden="true"><g fill="none" stroke-width="96" stroke-linecap="round"><path d="M281 270L450 614" stroke="#e2cc47" opacity="0.25"/><path d="M743 270L574 614" stroke="currentColor"/></g><circle cx="512" cy="740" r="64" fill="#f84b4b"/></svg>
+        <strong>The call</strong>
+        <span>Split into voices, one speaker each</span>
+      </li>
+    </ul>
+  </div>
+  <figure class="window" style="--crop: 2000 / 700">
+    <img class="light" src="assets/speakers-light.png" width="2000" height="1200" loading="lazy" alt="The Speakers screen: voices Vedivox has learned, with the meetings each person was in">
+    <img class="dark" src="assets/speakers-dark.png" width="2000" height="1200" loading="lazy" alt="The Speakers screen: voices Vedivox has learned, with the meetings each person was in">
+  </figure>
+</section>
+
+<section aria-labelledby="more">
+  <h2 id="more">What else it does</h2>
+  <div class="more">
+    <div>
+      <h3>Dictation with a hotkey</h3>
+      <p>Press <kbd class="key">⌘⇧2</kbd> in any app and speak; the text is typed where your cursor is. Music pauses while you talk.</p>
+    </div>
+    <div>
+      <h3>Notices calls</h3>
+      <p>Zoom, Teams, Google Meet and Telemost calls are detected, and Vedivox reminds you to record. Starting and stopping on its own is a setting, off by default.</p>
+    </div>
+    <div>
+      <h3>Keeps parts out</h3>
+      <p>Press <kbd class="key">⌃⇧⌘1</kbd> and what is said from then on stays out of the transcript until you press it again.</p>
+    </div>
+    <div>
+      <h3>Imports recordings</h3>
+      <p>Drag an audio file onto the window and it gets the same transcript and speakers as a live recording.</p>
+    </div>
+    <div>
+      <h3>Trims and splits</h3>
+      <p>Cut the chatter at the start of a call, or split one recording into two meetings.</p>
+    </div>
+    <div>
+      <h3>Learns your words</h3>
+      <p>A plain vocabulary file fixes the names and jargon speech recognition gets wrong, in transcripts and in dictation.</p>
+    </div>
+  </div>
+</section>
+
+<section id="get" aria-labelledby="get-h">
+  <div class="split top-aligned">
+    <div class="text">
+      <h2 id="get-h">Get Vedivox</h2>
+      <p>With Homebrew:</p>
+      <pre><code>brew install --cask dimstunt/tap/vedivox</code></pre>
+      <p>That installs the app, the <code>vedivox</code> command and the MCP server, and prints the one command that copies the Claude Code skills.</p>
+      <p>Or <a href="https://github.com/dimstunt/vedivox/releases/latest">download the latest release</a> as a zip and run <code>bash install.sh</code> in the unpacked folder: it installs all of that, skills included. <a href="https://github.com/dimstunt/vedivox/blob/HEAD/docs/INSTALL.md">INSTALL.md</a> walks through every step.</p>
+      <p class="muted">Vedivox is free software under the GNU GPL, version 3 or later, and its <a href="https://github.com/dimstunt/vedivox">source is on GitHub</a>. It is pre-1.0, built for one person’s daily use and shared as is; database migrations may still break compatibility between versions.</p>
+    </div>
+    <dl class="facts-list side">
+      <div><dt>Requirements</dt><dd>macOS 14.4 or later on Apple Silicon. Internet on first launch for the model download, and about 3&nbsp;GB of free disk for the models and their caches.</dd></div>
+      <div><dt>Permissions it asks for</dt><dd><ul>
+        <li>Microphone, on the first recording.</li>
+        <li>Screen &amp; System Audio Recording, to hear the other side of a call.</li>
+        <li>Optional: Accessibility for typing dictated text, Calendar to link meetings to events, Automation to notice a call in a browser tab.</li>
+      </ul></dd></div>
+      <div><dt>Removing it</dt><dd>Your library is in <code>~/Library/Application Support/Vedivox/</code>; the speech models are in <code>~/Library/Application Support/FluidAudio/Models</code>. Delete both by hand.</dd></div>
+      <div><dt>Built on</dt><dd>FluidAudio, NVIDIA’s Parakeet speech model, and the pyannote and WeSpeaker speaker models.</dd></div>
+      <div><dd><details>
+        <summary>Supported languages</summary>
+        <p>Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian, Finnish, French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Russian, Slovak, Slovenian, Spanish, Swedish and Ukrainian. Other languages are not supported.</p>
+      </details></dd></div>
+    </dl>
+  </div>
+</section>
+
+<footer>
+  <p>© 2026 <a href="https://dimstunt.de">Dmitrii Cherkashin</a></p>
+  <p><a href="https://dimstunt.de">dimstunt.de</a></p>
+</footer>
+
+</div>
+</body>
+</html>

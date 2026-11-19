@@ -1,0 +1,14 @@
+{
+  "name": "vedivox",
+  "owner": { "name": "Dmitrii Cherkashin" },
+  "metadata": {
+    "description": "Claude Code skills for Vedivox, the macOS meeting recorder"
+  },
+  "plugins": [
+    {
+      "name": "vedivox",
+      "source": "./",
+      "description": "Ask about your Vedivox meetings, get help during a call from its live text, and give a meeting a title and a timestamped description"
+    }
+  ]
+}

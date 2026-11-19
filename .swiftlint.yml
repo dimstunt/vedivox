@@ -1,0 +1,23 @@
+# SwiftLint — high-signal profile. Formatting is SwiftFormat's job
+# (.swiftformat); here we keep only rules that catch likely bugs or
+# genuinely confusing code. Run via the Claude Code PostToolUse hook.
+
+excluded:
+  - Vedivox/build
+  - VedivoxMCP/.build
+  - transcribe-bench/.build
+  - .venv
+
+disabled_rules:
+  # style/size metrics — noise for this codebase
+  - identifier_name          # sim, db, der, i — domain shorthand is fine
+  - trailing_comma           # SwiftFormat owns comma policy (--commas always)
+  - line_length
+  - function_body_length
+  - type_body_length
+  - file_length
+  - cyclomatic_complexity
+  - function_parameter_count
+  - large_tuple
+  - todo
+  - opening_brace            # `-> T {` on its own line is deliberate (see .swiftformat)

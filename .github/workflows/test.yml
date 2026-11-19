@@ -1,0 +1,29 @@
+# The headless logic suite (VedivoxCoreTests), the same gate as the pre-commit
+# hook. Ad-hoc signed (TEAM=-), no Apple account. No models are downloaded:
+# the suite runs on fixtures and pure functions.
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Show toolchain
+        run: xcodebuild -version
+      - name: make test
+        run: make test TEAM=-

@@ -1,0 +1,65 @@
+# Xcode
+xcuserdata/
+DerivedData/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# xcodegen — project is regenerated from project.yml
+project.pbxproj
+build/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+# Pinned dependency versions are committed: a fresh clone builds what the author built.
+!VedivoxMCP/Package.resolved
+!Vedivox/Vedivox.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+
+# macOS
+.DS_Store
+._*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Media / large files
+*.mp4
+!site/assets/*.mp4
+*.mp4.part
+*.wav
+!Vedivox/VedivoxCoreTests/TestResources/*.wav
+*.m4a
+*.mp3
+*.caf
+
+# Distribution archives (make dist)
+Vedivox-*.zip
+
+# Logs
+*.log
+ouptut.log
+
+# Environment
+.env
+.env.*
+
+
+# Python tooling caches
+.ruff_cache/
+
+
+# Coverage droppings from test runs
+*.profraw

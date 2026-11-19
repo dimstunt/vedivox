@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Vedivox</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Vedivox needs microphone access to record your side of meetings.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Vedivox needs system audio access to record what others say in meetings.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Vedivox uses calendar access to auto-name meetings from your schedule.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Vedivox reads your calendar to name meetings after the events they belong to.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Vedivox checks your browser tabs to identify Google Meet and Yandex Telemost calls.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Vedivox</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>vedivox</string>
+				<string>vox</string> <!-- rename:keep: links copied before the rename still open the app -->
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

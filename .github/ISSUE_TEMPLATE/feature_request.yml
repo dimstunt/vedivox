@@ -1,0 +1,24 @@
+name: Feature request
+description: Something Vedivox could do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Vedivox is a personal project shared as is. Requests are welcome, but they may wait or be
+        declined if they do not fit how Vedivox is meant to work.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and where Vedivox gets in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead

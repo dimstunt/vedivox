@@ -1,0 +1,3 @@
+import VedivoxCLIKit
+
+VedivoxCommand.main()
