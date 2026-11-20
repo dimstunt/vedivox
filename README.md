@@ -15,7 +15,7 @@ If Vedivox helps you, a ⭐ helps others find it.
 Vedivox records your microphone and the system audio of a call (Zoom, Google Meet,
 Microsoft Teams, Yandex Telemost, anything that plays sound), turns both into a transcript, and labels who said
 what. Voices it has met before are recognized by name in later meetings. It
-also does push-to-talk dictation into any app, imports existing recordings, and
+also types dictation into any app (press a hotkey, speak, press it again), imports existing recordings, and
 exposes everything through a command line and an MCP server, so an assistant
 such as Claude Code can search and summarize your meetings.
 
