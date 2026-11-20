@@ -15,7 +15,7 @@ or keeping a fork.
 
 ## Build and test
 
-You need macOS 14.4+ on Apple Silicon, Xcode 16 or later and
+You need macOS 14.4+ on Apple Silicon, Xcode 26 or later and
 [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`). The
 `vedivox` CLI and the MCP server are a Swift package (`VedivoxMCP/`) with the same macOS 14.4 minimum.
 

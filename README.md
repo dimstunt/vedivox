@@ -59,7 +59,7 @@ permissions, the CLI and the Claude Code skills — is in
 
 ## Build from source
 
-You need Xcode 16 or later and [XcodeGen](https://github.com/yonaskolb/XcodeGen)
+You need Xcode 26 or later and [XcodeGen](https://github.com/yonaskolb/XcodeGen)
 (`brew install xcodegen`).
 
 ```bash
