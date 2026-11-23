@@ -88,10 +88,11 @@ enum CLIListenCore {
     static func render(_ row: ListenQueueRow) -> String {
         let members = row.members ?? [ListenMemberRow(meetingId: row.meetingId, speakerId: row.speakerId)]
         let item = members.map { "\($0.meetingId.prefix(8)):\($0.speakerId.prefix(8))" }.joined(separator: "+")
-        let heading = row.reason == "recurring"
-            ? "unnamed voice in \(Set(members.map(\.meetingId)).count) meetings"
-            : "\(row.meetingTitle) · \(row.speakerLabel)"
-        var lines = ["\(item)  \(heading) · \(minutes(row.seconds)) · best \(String(format: "%.2f", row.bestSimilarity))"]
+        let stats = "\(minutes(row.seconds)) · best \(String(format: "%.2f", row.bestSimilarity))"
+        // A recurring voice's id runs to hundreds of characters: the heading first, the id below it.
+        var lines = row.reason == "recurring"
+            ? ["unnamed voice in \(Set(members.map(\.meetingId)).count) meetings · \(stats)", "    item \(item)"]
+            : ["\(item)  \(row.meetingTitle) · \(row.speakerLabel) · \(stats)"]
         if let fragment = row.fragment {
             lines.append("    ▶ \(formatTimestamp(fragment.from))–\(formatTimestamp(fragment.to)) \(fragment.track)  «\(row.line ?? "")»")
         }
