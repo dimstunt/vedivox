@@ -81,6 +81,7 @@ package enum AppCommandName {
     package static let listListenQueue = "list_listen_queue"
     package static let assignVoice = "assign_voice"
     package static let skipVoice = "skip_voice"
+    package static let splitVoice = "split_voice"
     package static let assignRange = "assign_range"
     package static let pinSpeakers = "pin_speakers"
 }

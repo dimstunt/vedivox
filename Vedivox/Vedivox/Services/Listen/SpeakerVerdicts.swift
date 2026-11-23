@@ -113,6 +113,64 @@ struct SpeakerVerdicts {
         return outcomes
     }
 
+    /// A line goes to the closest candidate only this far ahead of the runner-up.
+    static let splitMargin: Float = 0.05
+
+    struct SplitOutcome {
+        /// One per (meeting, person) that got lines.
+        let assigned: [AssignOutcome]
+        /// Lines no candidate won clearly; they stay where they were.
+        let unclear: Int
+
+        var summary: String {
+            (assigned.map(\.summary) + ["\(unclear) unclear segment(s) left"]).joined(separator: "\n")
+        }
+    }
+
+    /// One anonymous voice that is really two or three people: each line goes
+    /// to the candidate its own embedding is closest to, when it leads the
+    /// runner-up by `margin`, through `assign` — so verdicts and recalcs are
+    /// the usual ones. Lines without a clear winner stay.
+    func split(
+        meetingIds: [String], segmentIds: [Int64], between candidates: [String], margin: Float = splitMargin
+    ) async throws -> SplitOutcome {
+        let wanted = Set(segmentIds)
+        var assigned: [AssignOutcome] = []
+        var unclear = 0
+        for meetingId in meetingIds {
+            guard let meeting = try await MeetingRepository(db: db).find(meetingId) else { continue }
+            let space: EmbeddingSpace = meeting.diarizer == "offline" ? .v2 : .v1
+            let canonicals = try await SpeakerRepository(db: db).confirmedSpeakersWithEmbeddings(space: space)
+                .filter { candidates.contains($0.id) }
+                .map { (id: $0.id, canonical: $0.canonical) }
+            var lines: [String: [Int64]] = [:]
+            for segment in try await MeetingRepository(db: db).segments(for: meetingId) {
+                guard let id = segment.id, wanted.contains(id) else { continue }
+                guard let data = segment.embedding,
+                      let winner = Self.closest(Speaker.decodeEmbedding(data), among: canonicals, margin: margin)
+                else {
+                    unclear += 1
+                    continue
+                }
+                lines[winner, default: []].append(id)
+            }
+            for (speakerId, ids) in lines.sorted(by: { $0.key < $1.key }) {
+                assigned.append(try await assign(meetingId: meetingId, segmentIds: ids, to: .existing(speakerId: speakerId)))
+            }
+        }
+        return SplitOutcome(assigned: assigned, unclear: unclear)
+    }
+
+    /// The candidate `voice` is closest to, when it leads the runner-up by `margin`.
+    static func closest(_ voice: [Float], among canonicals: [(id: String, canonical: [Float])], margin: Float) -> String? {
+        let ranked = canonicals.filter { $0.canonical.count == voice.count && !voice.isEmpty }
+            .map { (id: $0.id, sim: cosineSimilarity(voice, $0.canonical)) }
+            .sorted { $0.sim > $1.sim }
+        guard let best = ranked.first else { return nil }
+        guard ranked.count > 1 else { return best.id }
+        return best.sim - ranked[1].sim >= margin ? best.id : nil
+    }
+
     /// `skip` over each meeting of a recurring voice. Returns the intervals written.
     func skip(meetingIds: [String], segmentIds: [Int64]) async throws -> Int {
         var intervals = 0

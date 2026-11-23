@@ -6,7 +6,7 @@ import Foundation
 /// core, so the same code the app runs is what the tests run.
 enum ListenCommands {
     static let names: Set<String> = [
-        AppCommandName.listListenQueue, AppCommandName.assignVoice, AppCommandName.skipVoice,
+        AppCommandName.listListenQueue, AppCommandName.assignVoice, AppCommandName.skipVoice, AppCommandName.splitVoice,
         AppCommandName.assignRange, AppCommandName.pinSpeakers,
     ]
 
@@ -88,6 +88,28 @@ enum ListenCommands {
                 guard !ids.isEmpty else { return voiceGone(members) }
                 let intervals = try await SpeakerVerdicts(db: db).skip(meetingIds: meetings, segmentIds: ids)
                 return .success("Skipped \(ids.count) segment(s) in \(intervals) interval(s)")
+
+            case AppCommandName.splitVoice:
+                guard let members = members(p) else {
+                    return .failure("\(request.command) needs meeting_id and speaker_id, or members", reason: .invalidParameters)
+                }
+                let candidates = (p["candidates"] ?? "").split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                guard candidates.count >= 2 else {
+                    return .failure("\(request.command) needs at least two candidates", reason: .invalidParameters)
+                }
+                var margin = SpeakerVerdicts.splitMargin
+                if let raw = nonEmpty(p["margin"]) {
+                    guard let parsed = Float(raw), parsed >= 0 else {
+                        return .failure("margin must be a non-negative number", reason: .invalidParameters)
+                    }
+                    margin = parsed
+                }
+                let (meetings, ids) = try await voice(members, db: db)
+                guard !ids.isEmpty else { return voiceGone(members) }
+                let outcome = try await SpeakerVerdicts(db: db)
+                    .split(meetingIds: meetings, segmentIds: ids, between: candidates, margin: margin)
+                return .success(outcome.summary)
 
             case AppCommandName.assignRange:
                 guard let meetingId = nonEmpty(p["meeting_id"]), let speakerId = nonEmpty(p["speaker_id"]),

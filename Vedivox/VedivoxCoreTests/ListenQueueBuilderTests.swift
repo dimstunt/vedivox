@@ -351,6 +351,43 @@ final class ListenQueueBuilderTests: XCTestCase {
         XCTAssertEqual(back.map(\.reason), [.recurring(meetings: 4)])
     }
 
+    // MARK: Split
+
+    func testSplit_givesEachLineToTheCloserPerson_unclearStays() async throws {
+        let alice = try await confirmed("Alice", v2: basis(0))
+        let bob = try await confirmed("Bob", v2: basis(1))
+        var meeting = makeMeeting(title: "Mixed", status: .done)
+        meeting.diarizer = "offline"
+        try await meetingRepo.save(meeting)
+        let anon = makeSpeaker(name: "speaker_1")
+        try await speakerRepo.save(anon)
+        try await speakerRepo.assignSpeakerToMeeting(meetingId: meeting.id, speakerId: anon.id, diarizationLabel: "speaker_1")
+        var even = basis(0)
+        even[1] = 1 // as close to Bob as to Alice
+        let voices = [basis(0), basis(1), basis(0), even]
+        try await meetingRepo.saveSegments(voices.enumerated().map { n, voice in
+            var line = makeSegment(meetingId: meeting.id, speakerId: anon.id, speakerLabel: "speaker_1", source: .system,
+                                   startTime: Double(n * 10), endTime: Double(n * 10 + 5), text: "line \(n)")
+            line.embedding = Speaker.encodeEmbedding(voice)
+            return line
+        })
+        let ids = try await meetingRepo.segments(for: meeting.id).compactMap(\.id)
+
+        let outcome = try await SpeakerVerdicts(db: db).split(meetingIds: [meeting.id], segmentIds: ids, between: [alice.id, bob.id])
+
+        XCTAssertEqual(outcome.unclear, 1)
+        let owners = try await meetingRepo.segments(for: meeting.id).map(\.speakerId)
+        XCTAssertEqual(owners, [alice.id, bob.id, alice.id, anon.id])
+    }
+
+    func testClosest_needsTheMargin() {
+        let pool = [(id: "a", canonical: basis(0)), (id: "b", canonical: basis(1))]
+        XCTAssertEqual(SpeakerVerdicts.closest(voice(sim: 0.9), among: pool, margin: 0.05), "a")
+        var near = basis(0)
+        near[1] = 0.95
+        XCTAssertNil(SpeakerVerdicts.closest(near, among: pool, margin: 0.05), "0.72 против 0.69 — меньше порога")
+    }
+
     func testGroups_averageLinkage() {
         let a = basis(1), b = basis(2)
         var nearA = a

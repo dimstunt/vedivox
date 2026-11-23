@@ -315,7 +315,7 @@ actor TranscriptionPipeline {
         // Two-stage diarization: Stage 1 runs FluidAudio with NO
         // enrollment so within-meeting clustering is purely acoustic. Enrolled
         // identities are matched against cluster centroids in Stage 2 below.
-        let candidates = try await Self.enrolledCandidates(db: db, reprocessing: meetingId)
+        let candidates = try await Self.enrolledCandidates(db: db)
         Log.info("Two-stage: \(candidates.count) enrolled candidates loaded [\(candidates.map(\.displayName).joined(separator: ", "))]")
 
         // Diarize system audio (Stage 1, no enrollment) — parallel with mic transcription.
@@ -663,7 +663,7 @@ actor TranscriptionPipeline {
                 let heard = try await analyzeImportAudio(
                     playbackURL: system.url, workDir: workDir, meetingId: "", onDiarizing: {}
                 )
-                let pool = try await Self.enrolledCandidates(db: db, reprocessing: "")
+                let pool = try await Self.enrolledCandidates(db: db)
                 let (track, voices) = LiveTailAnalysis.system(
                     segments: heard.segments, labelToDbId: heard.labelToDbId, pool: pool,
                     from: system.from, duration: duration
@@ -760,7 +760,7 @@ actor TranscriptionPipeline {
         // Two-stage diarization — see processTwoStream for the rationale.
         try await onDiarizing()
 
-        let candidates = try await Self.enrolledCandidates(db: db, reprocessing: meetingId)
+        let candidates = try await Self.enrolledCandidates(db: db)
         Log.info("Two-stage: \(candidates.count) enrolled candidates loaded [\(candidates.map(\.displayName).joined(separator: ", "))]")
         var diarizationResult: DiarizationService.DiarizationResult?
         do {
@@ -882,15 +882,14 @@ actor TranscriptionPipeline {
     /// Filters out speakers with no embedding. The matcher itself further filters by
     /// `minSegmentsForCanonical` (default 5).
     ///
-    /// `reprocessing`: the meeting this pass is for. Its previous transcript is
-    /// still in the database (it is replaced only when the new one is saved)
-    /// and must not vouch for anyone.
+    /// The counts include the meeting being reprocessed: its old lines are
+    /// still in the database, and leaving them out dropped every confirmed
+    /// person whose lines all sat in that meeting — the new pass could not
+    /// find them, and their lines went to an anonymous voice for good.
     ///
     /// Static, so the live transcript reads the same pool when a recording
     /// starts without waiting for this actor.
-    static func enrolledCandidates(
-        db: DatabaseManager = .shared, reprocessing meetingId: String
-    ) async throws -> [SpeakerMatcher.Candidate] {
+    static func enrolledCandidates(db: DatabaseManager = .shared) async throws -> [SpeakerMatcher.Candidate] {
         // Dual-pool: cluster centroids live in the active diarizer's
         // embedder space, so the canonical pool must come from the same space.
         let space: EmbeddingSpace = DiarizationService.useOfflineDiarizer ? .v2 : .v1
@@ -899,7 +898,7 @@ actor TranscriptionPipeline {
         Log.info("Two-stage: candidate pool space \(space) (\(speakers.count) speakers)")
         // Pool hygiene — see `Speaker.isEligibleForMatchingPool`.
         let withEmbeddings = speakers.filter(\.isEligibleForMatchingPool)
-        let counts = try await speakerRepo.segmentCounts(for: withEmbeddings.map(\.id), excludingMeeting: meetingId)
+        let counts = try await speakerRepo.segmentCounts(for: withEmbeddings.map(\.id))
         return withEmbeddings.map { speaker in
             SpeakerMatcher.Candidate(
                 speakerId: speaker.id,

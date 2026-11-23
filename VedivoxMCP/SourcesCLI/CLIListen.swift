@@ -148,6 +148,16 @@ enum CLIListenCore {
         try CLIActionCore.send(AppCommandRequest(command: AppCommandName.skipVoice, params: try voiceParams(item, db: db)))
     }
 
+    /// A mixed voice split line by line between known people (`vedivox queue split`).
+    static func split(item: String, speakerIds: [String], margin: Double?, db: DatabaseReader) throws -> String {
+        guard Set(speakerIds).count >= 2 else { throw CLIFailure(code: 64, message: "pass --speaker at least twice") }
+        guard margin.map({ $0 >= 0 }) ?? true else { throw CLIFailure(code: 64, message: "--margin must not be negative") }
+        var params = try voiceParams(item, db: db)
+        params["candidates"] = speakerIds.joined(separator: ",")
+        if let margin { params["margin"] = String(margin) }
+        return try CLIActionCore.send(AppCommandRequest(command: AppCommandName.splitVoice, params: params))
+    }
+
     /// One `meetingPrefix:speakerPrefix`, or a recurring voice's `…+…+…` — each part resolved.
     private static func voiceParams(_ item: String, db: DatabaseReader) throws -> [String: String] {
         let voices = try item.split(separator: "+", omittingEmptySubsequences: false).map { try resolveItem(String($0), db: db) }
@@ -198,7 +208,7 @@ struct Queue: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "queue",
         abstract: "Voices to check by ear: list (default), assign or skip (run through the app).",
-        subcommands: [ListQueue.self, AssignVoice.self, SkipVoice.self],
+        subcommands: [ListQueue.self, AssignVoice.self, SkipVoice.self, SplitVoice.self],
         defaultSubcommand: ListQueue.self
     )
 
@@ -246,6 +256,23 @@ struct Queue: ParsableCommand {
 
         func run() throws {
             try executeCore { db in try CLIListenCore.skip(item: item, db: db) }
+        }
+    }
+
+    struct SplitVoice: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "split",
+            abstract: "A voice that is several people: each line goes to the speaker it sounds closest to; unclear lines stay."
+        )
+
+        @Argument(help: "Item: meetingPrefix:speakerPrefix, or a recurring voice's parts joined by + (see `vedivox queue`).")
+        var item: String
+        @Option(name: .customLong("speaker"), help: "A speaker id to split between (repeat, at least two).")
+        var speakers: [String] = []
+        @Option(help: "How far a line's best speaker must lead the next (default 0.05).") var margin: Double?
+
+        func run() throws {
+            try executeCore { db in try CLIListenCore.split(item: item, speakerIds: speakers, margin: margin, db: db) }
         }
     }
 }

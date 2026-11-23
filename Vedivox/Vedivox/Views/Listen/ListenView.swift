@@ -57,7 +57,7 @@ struct ListenView: View {
         .onDisappear { viewModel.leave() }
     }
 
-    private static let actionKeys = CharacterSet(charactersIn: "123nNsSoO/")
+    private static let actionKeys = CharacterSet(charactersIn: "123nNsSoOxX/")
 
     /// Keys act only while the region holds the keyboard — never while the
     /// caret is in the name or search field (`keyboard-input`).
@@ -75,6 +75,7 @@ struct ListenView: View {
         case "n", "N": open(.newName)
         case "/": open(.search)
         case "s", "S": Task { await viewModel.skip() }
+        case "x", "X": Task { await viewModel.splitTopTwo() }
         case "o", "O": openInMeeting()
         default: break
         }
@@ -273,6 +274,11 @@ struct ListenView: View {
                     Button("N  New person…") { open(.newName) }.buttonStyle(.vedivoxGhost)
                     Button("/  Other speaker…") { open(.search) }.buttonStyle(.vedivoxGhost)
                     Button("S  Skip") { Task { await viewModel.skip() } }.buttonStyle(.vedivoxGhost)
+                    if item.candidates.count >= 2 {
+                        Button("X  Split 1 / 2") { Task { await viewModel.splitTopTwo() } }
+                            .buttonStyle(.vedivoxGhost)
+                            .help("Two people in one voice: each line goes to whichever of 1 and 2 it sounds closer to")
+                    }
                     Button("O  Open in meeting") { openInMeeting() }.buttonStyle(.vedivoxGhost)
                 }
                 .disabled(viewModel.isApplying)

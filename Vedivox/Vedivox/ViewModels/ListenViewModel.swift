@@ -248,6 +248,19 @@ final class ListenViewModel {
         }
     }
 
+    /// A voice that is two people: each line to whichever of the first two candidates it sounds closer to.
+    func splitTopTwo() async {
+        guard let item = selected, item.candidates.count >= 2 else { return }
+        await apply(item) {
+            let result = try await SpeakerVerdicts(db: db).split(
+                meetingIds: item.meetingIds, segmentIds: item.segmentIds,
+                between: item.candidates.prefix(2).map(\.speakerId)
+            )
+            let moved = result.assigned.map { "\($0.speaker.displayName) \($0.segments)" }.joined(separator: ", ")
+            return "⇆ \(item.heading) → \(moved.isEmpty ? "nobody" : moved) · \(result.unclear) unclear left"
+        }
+    }
+
     private func decide(_ target: SpeakerVerdicts.Target) async {
         guard let item = selected else { return }
         await apply(item) {
