@@ -16,7 +16,7 @@ What changed in Vedivox, newest first. The non-obvious controls are described in
   "Reprocess report for <meeting>": anonymous speech before and after, how much speech changed
   hands, and who moved to whom (`speaker_1 → Alice 4.7` minutes), largest first.
 - **Split a voice that is two people**: in Listen, **X** gives each line of the voice to whichever of
-  candidates 1 and 2 it sounds closer to; lines that are not clearly closer to one stay unnamed.
+  candidates 1 and 2 it sounds like; a line that does not clearly sound like one of them stays unnamed.
   From the command line: `vedivox queue split <item> --speaker <id> --speaker <id> [--margin 0.05]`.
 
 ### Fixed

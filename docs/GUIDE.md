@@ -209,7 +209,7 @@ text field:
 - **N** — a new person: type the name, **Return** applies, **Esc** cancels. An existing name
   lands on that person. **/** — pick another known speaker by name.
 - **X** — split: the voice is two people. Each line goes to whichever of candidates 1 and 2 it
-  sounds closer to; lines that are not clearly closer to one stay unnamed.
+  sounds like; a line that does not clearly sound like one of them stays unnamed.
 - **S** — skip: listened, no name. Skipped voices stay out of the list, also after Reprocess;
   the **Skipped** checkbox shows them.
 - **O** — open the meeting at the fragment.

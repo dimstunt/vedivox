@@ -364,7 +364,9 @@ final class ListenQueueBuilderTests: XCTestCase {
         try await speakerRepo.assignSpeakerToMeeting(meetingId: meeting.id, speakerId: anon.id, diarizationLabel: "speaker_1")
         var even = basis(0)
         even[1] = 1 // as close to Bob as to Alice
-        let voices = [basis(0), basis(1), basis(0), even]
+        // A third voice: much closer to Alice than to Bob, but like neither (0.3).
+        let stranger = voice(sim: 0.3, axis: 7)
+        let voices = [basis(0), basis(1), basis(0), even, stranger]
         try await meetingRepo.saveSegments(voices.enumerated().map { n, voice in
             var line = makeSegment(meetingId: meeting.id, speakerId: anon.id, speakerLabel: "speaker_1", source: .system,
                                    startTime: Double(n * 10), endTime: Double(n * 10 + 5), text: "line \(n)")
@@ -375,17 +377,19 @@ final class ListenQueueBuilderTests: XCTestCase {
 
         let outcome = try await SpeakerVerdicts(db: db).split(meetingIds: [meeting.id], segmentIds: ids, between: [alice.id, bob.id])
 
-        XCTAssertEqual(outcome.unclear, 1)
+        XCTAssertEqual(outcome.unclear, 2)
         let owners = try await meetingRepo.segments(for: meeting.id).map(\.speakerId)
-        XCTAssertEqual(owners, [alice.id, bob.id, alice.id, anon.id])
+        XCTAssertEqual(owners, [alice.id, bob.id, alice.id, anon.id, anon.id], "чужой голос не уходит к тому, кто просто ближе")
     }
 
     func testClosest_needsTheMargin() {
         let pool = [(id: "a", canonical: basis(0)), (id: "b", canonical: basis(1))]
-        XCTAssertEqual(SpeakerVerdicts.closest(voice(sim: 0.9), among: pool, margin: 0.05), "a")
+        XCTAssertEqual(SpeakerVerdicts.closest(voice(sim: 0.9), among: pool, margin: 0.05, minSimilarity: 0.7), "a")
         var near = basis(0)
         near[1] = 0.95
-        XCTAssertNil(SpeakerVerdicts.closest(near, among: pool, margin: 0.05), "0.72 против 0.69 — меньше порога")
+        XCTAssertNil(SpeakerVerdicts.closest(near, among: pool, margin: 0.05, minSimilarity: 0.7), "0.72 против 0.69 — меньше перевеса")
+        XCTAssertNil(SpeakerVerdicts.closest(voice(sim: 0.6, axis: 7), among: pool, margin: 0.05, minSimilarity: 0.7),
+                     "ближе к a (0.6 против 0), но на a не похож")
     }
 
     func testGroups_averageLinkage() {

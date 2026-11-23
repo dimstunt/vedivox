@@ -115,6 +115,11 @@ struct SpeakerVerdicts {
 
     /// A line goes to the closest candidate only this far ahead of the runner-up.
     static let splitMargin: Float = 0.05
+    /// …and only when it sounds like that candidate on its own: closer to two
+    /// people than to each other says nothing about a third voice. 95% of
+    /// confirmed people's own lines reach this against their canonical, 5% of
+    /// lines against the nearest other person's (2026-11-23, 20 000 lines).
+    static let splitMinSimilarity: Float = 0.70
 
     struct SplitOutcome {
         /// One per (meeting, person) that got lines.
@@ -128,9 +133,9 @@ struct SpeakerVerdicts {
     }
 
     /// One anonymous voice that is really two or three people: each line goes
-    /// to the candidate its own embedding is closest to, when it leads the
-    /// runner-up by `margin`, through `assign` — so verdicts and recalcs are
-    /// the usual ones. Lines without a clear winner stay.
+    /// to the candidate its own embedding is closest to, when it sounds like
+    /// them (`splitMinSimilarity`) and leads the runner-up by `margin`, through
+    /// `assign` — so verdicts and recalcs are the usual ones. Other lines stay.
     func split(
         meetingIds: [String], segmentIds: [Int64], between candidates: [String], margin: Float = splitMargin
     ) async throws -> SplitOutcome {
@@ -147,7 +152,9 @@ struct SpeakerVerdicts {
             for segment in try await MeetingRepository(db: db).segments(for: meetingId) {
                 guard let id = segment.id, wanted.contains(id) else { continue }
                 guard let data = segment.embedding,
-                      let winner = Self.closest(Speaker.decodeEmbedding(data), among: canonicals, margin: margin)
+                      let winner = Self.closest(
+                          Speaker.decodeEmbedding(data), among: canonicals, margin: margin, minSimilarity: Self.splitMinSimilarity
+                      )
                 else {
                     unclear += 1
                     continue
@@ -161,17 +168,21 @@ struct SpeakerVerdicts {
         return SplitOutcome(assigned: assigned, unclear: unclear)
     }
 
-    /// The candidate `voice` is closest to, when it leads the runner-up by `margin`.
-    static func closest(_ voice: [Float], among canonicals: [(id: String, canonical: [Float])], margin: Float) -> String? {
+    /// The candidate `voice` is closest to, when it reaches `minSimilarity` and
+    /// leads the runner-up by `margin`.
+    static func closest(
+        _ voice: [Float], among canonicals: [(id: String, canonical: [Float])], margin: Float, minSimilarity: Float
+    ) -> String? {
         let ranked = canonicals.filter { $0.canonical.count == voice.count && !voice.isEmpty }
             .map { (id: $0.id, sim: cosineSimilarity(voice, $0.canonical)) }
             .sorted { $0.sim > $1.sim }
-        guard let best = ranked.first else { return nil }
+        guard let best = ranked.first, best.sim >= minSimilarity else { return nil }
         guard ranked.count > 1 else { return best.id }
         return best.sim - ranked[1].sim >= margin ? best.id : nil
     }
 
     /// `skip` over each meeting of a recurring voice. Returns the intervals written.
+    @discardableResult
     func skip(meetingIds: [String], segmentIds: [Int64]) async throws -> Int {
         var intervals = 0
         for meetingId in meetingIds {
