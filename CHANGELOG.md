@@ -12,6 +12,9 @@ What changed in Vedivox, newest first. The non-obvious controls are described in
   meeting. Naming it (or skipping it) applies to every meeting at once; a skipped voice comes back
   when it turns up in a new meeting. In `vedivox queue` such an item's id is its records joined
   by `+`, and `assign` and `skip` take it as is.
+- **Reprocess says what it changed**: after each reprocess the log (`vedivox.log`) gets a line
+  "Reprocess report for <meeting>": anonymous speech before and after, how much speech changed
+  hands, and who moved to whom (`speaker_1 → Alice 4.7` minutes), largest first.
 
 ## 0.5.0 — 2026-11-19
 
