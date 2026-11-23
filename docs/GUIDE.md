@@ -196,8 +196,10 @@ Only when the cursor is not in a text field:
 
 ## Listen
 
-Unnamed voices that sound like a known person. Keys work when the cursor is not in a text
-field:
+Unnamed voices that sound like a known person, and unnamed voices that sound like no one you
+know but speak in three or more meetings ("Unnamed voice in N meetings": its fragments come one
+from each meeting, and a decision applies to all of them). Keys work when the cursor is not in a
+text field:
 
 - **Space** — play / pause the fragment (the first 15 s of the voice's longest stretch).
   **← / →** or the arrows beside "fragment 1 / 14" — previous / next fragment, longest first.

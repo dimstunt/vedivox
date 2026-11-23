@@ -277,4 +277,86 @@ final class ListenQueueBuilderTests: XCTestCase {
         XCTAssertEqual(left, 1)
         XCTAssertEqual(left, queue.count)
     }
+
+    // MARK: Recurring voices
+
+    /// `count` meetings, each with an anonymous record of the same v2 voice.
+    @discardableResult
+    private func recurring(_ embedding: [Float], in count: Int, seconds: Double = 300) async throws -> [(Meeting, Speaker)] {
+        var made: [(Meeting, Speaker)] = []
+        for n in 0 ..< count {
+            made.append(try await meetingWithAnon(seconds: seconds + Double(n) * 100, embedding: embedding,
+                                                  diarizer: "offline", title: "R\(n)"))
+        }
+        return made
+    }
+
+    func testVoiceLikeNoOne_inThreeMeetings_isOneItem() async throws {
+        try await confirmed("Alice", v2: basis(0))
+        let made = try await recurring(basis(7), in: 3)
+
+        let queue = try await ListenQueueBuilder(db: db).build()
+
+        XCTAssertEqual(queue.count, 1)
+        let item = try XCTUnwrap(queue.first)
+        XCTAssertEqual(item.reason, .recurring(meetings: 3))
+        XCTAssertEqual(Set(item.members.map(\.speakerId)), Set(made.map(\.1.id)))
+        XCTAssertEqual(item.meetingTitle, "R2", "якорь — запись с самой длинной речью")
+        XCTAssertEqual(Set(item.fragments.map(\.meetingId)).count, 3, "по фрагменту из каждой встречи")
+        XCTAssertEqual(item.candidates.map(\.name), ["Alice"], "подсказка остаётся, хоть и далёкая")
+        XCTAssertEqual(item.segmentIds.count, 15 + 20 + 25)
+        XCTAssertEqual(item.heading, "Unnamed voice in 3 meetings")
+    }
+
+    func testVoiceLikeNoOne_inTwoMeetings_orTwoVoices_groupApart() async throws {
+        try await recurring(basis(7), in: 2)
+        try await recurring(basis(8), in: 3)
+        try await recurring(basis(9), in: 3)
+
+        let queue = try await ListenQueueBuilder(db: db).build()
+
+        XCTAssertEqual(queue.map(\.reason), [.recurring(meetings: 3), .recurring(meetings: 3)])
+    }
+
+    func testRecurringVoice_assignedOnce_movesEveryMeeting() async throws {
+        let made = try await recurring(basis(7), in: 3)
+        let item = try await ListenQueueBuilder(db: db).build()[0]
+
+        let outcomes = try await SpeakerVerdicts(db: db)
+            .assign(meetingIds: item.meetingIds, segmentIds: item.segmentIds, to: .new(name: "Zoe"))
+
+        XCTAssertEqual(Set(outcomes.map(\.speaker.id)).count, 1, "одна персона на все встречи")
+        for (meeting, anon) in made {
+            let lines = try await meetingRepo.segments(for: meeting.id)
+            XCTAssertTrue(lines.allSatisfy { $0.speakerId == outcomes[0].speaker.id })
+            let gone = try await speakerRepo.find(anon.id)
+            XCTAssertNil(gone)
+        }
+        let left = try await ListenQueueBuilder(db: db).build()
+        XCTAssertTrue(left.isEmpty)
+    }
+
+    func testRecurringVoice_skipped_comesBackWithANewMeeting() async throws {
+        try await recurring(basis(7), in: 3)
+        let item = try await ListenQueueBuilder(db: db).build()[0]
+        try await SpeakerVerdicts(db: db).skip(meetingIds: item.meetingIds, segmentIds: item.segmentIds)
+
+        let hidden = try await ListenQueueBuilder(db: db).build()
+        let skipped = try await ListenQueueBuilder(db: db).build(skipped: true)
+        XCTAssertTrue(hidden.isEmpty)
+        XCTAssertEqual(skipped.map(\.reason), [.recurring(meetings: 3)])
+
+        try await meetingWithAnon(seconds: 300, embedding: basis(7), diarizer: "offline")
+        let back = try await ListenQueueBuilder(db: db).build()
+        XCTAssertEqual(back.map(\.reason), [.recurring(meetings: 4)])
+    }
+
+    func testGroups_averageLinkage() {
+        let a = basis(1), b = basis(2)
+        var nearA = a
+        nearA[3] = 0.3
+        // a, b and nearA: a and nearA join (0.96), b stays apart (0).
+        let groups = ListenQueueBuilder.groups([a, b, nearA], threshold: 0.7).map { $0.sorted() }.sorted { $0[0] < $1[0] }
+        XCTAssertEqual(groups, [[0, 2], [1]])
+    }
 }

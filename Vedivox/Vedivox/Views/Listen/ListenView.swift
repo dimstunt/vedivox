@@ -165,7 +165,7 @@ struct ListenView: View {
             ContentUnavailableView(
                 viewModel.showSkipped ? "No skipped voices" : "Nothing to listen to",
                 systemImage: "ear",
-                description: Text("Unnamed voices that sound like a known person appear here after processing.")
+                description: Text("Unnamed voices that sound like a known person, or recur in several meetings, appear here after processing.")
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
@@ -194,7 +194,7 @@ struct ListenView: View {
                 HStack(spacing: VedivoxSpace.m) {
                     Image(systemName: isSelected ? "chevron.down" : "chevron.right")
                         .frame(width: 12)
-                    Text("\(item.meetingTitle) · \(item.speakerLabel) · \(Self.duration(item.seconds))")
+                    Text("\(item.heading) · \(Self.duration(item.seconds))")
                         .vedivoxFont(.row)
                         .lineLimit(1)
                     Spacer(minLength: VedivoxSpace.m)

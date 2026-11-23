@@ -5,6 +5,14 @@ What changed in Vedivox, newest first. The non-obvious controls are described in
 
 ## Unreleased
 
+### Added
+
+- **Listen finds unnamed regulars**: a voice that sounds like no one you know but speaks in three
+  or more meetings shows up once, as "Unnamed voice in N meetings", with a fragment from each
+  meeting. Naming it (or skipping it) applies to every meeting at once; a skipped voice comes back
+  when it turns up in a new meeting. In `vedivox queue` such an item's id is its records joined
+  by `+`, and `assign` and `skip` take it as is.
+
 ## 0.5.0 — 2026-11-19
 
 ### Added

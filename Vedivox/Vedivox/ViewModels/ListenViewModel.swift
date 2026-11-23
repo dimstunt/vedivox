@@ -243,18 +243,19 @@ final class ListenViewModel {
     func skip() async {
         guard let item = selected else { return }
         await apply(item) {
-            let intervals = try await SpeakerVerdicts(db: db).skip(meetingId: item.members[0].meetingId, segmentIds: item.segmentIds)
-            return "skipped \(item.speakerLabel) (\(item.meetingTitle)) · \(intervals) interval(s)"
+            let intervals = try await SpeakerVerdicts(db: db).skip(meetingIds: item.meetingIds, segmentIds: item.segmentIds)
+            return "skipped \(item.heading) · \(intervals) interval(s)"
         }
     }
 
     private func decide(_ target: SpeakerVerdicts.Target) async {
         guard let item = selected else { return }
         await apply(item) {
-            let result = try await SpeakerVerdicts(db: db).assign(
-                meetingId: item.members[0].meetingId, segmentIds: item.segmentIds, to: target
+            let results = try await SpeakerVerdicts(db: db).assign(
+                meetingIds: item.meetingIds, segmentIds: item.segmentIds, to: target
             )
-            return "✓ \(item.speakerLabel) (\(item.meetingTitle)) → \(result.speaker.displayName) · "
+            guard let result = results.last else { return "nothing moved" }
+            return "✓ \(item.heading) → \(result.speaker.displayName) · "
                 + SpeakerRepository.RecalcOutcome.summary(result.target)
         }
     }

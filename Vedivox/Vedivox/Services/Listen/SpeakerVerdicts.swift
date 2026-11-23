@@ -99,6 +99,29 @@ struct SpeakerVerdicts {
         return outcome
     }
 
+    /// One decision over a voice heard in several meetings (a recurring queue
+    /// item): each meeting's share of `segmentIds` goes to the same person; a
+    /// typed name creates them once. Outcomes in meeting order.
+    func assign(meetingIds: [String], segmentIds: [Int64], to target: Target) async throws -> [AssignOutcome] {
+        var target = target
+        var outcomes: [AssignOutcome] = []
+        for meetingId in meetingIds {
+            let outcome = try await assign(meetingId: meetingId, segmentIds: segmentIds, to: target)
+            target = .existing(speakerId: outcome.speaker.id)
+            outcomes.append(outcome)
+        }
+        return outcomes
+    }
+
+    /// `skip` over each meeting of a recurring voice. Returns the intervals written.
+    func skip(meetingIds: [String], segmentIds: [Int64]) async throws -> Int {
+        var intervals = 0
+        for meetingId in meetingIds {
+            intervals += try await skip(meetingId: meetingId, segmentIds: segmentIds)
+        }
+        return intervals
+    }
+
     /// One segment by id, its meeting looked up (`vedivox segment set <segment-id>`).
     func assign(segmentId: Int64, to speakerId: String) async throws -> AssignOutcome {
         guard let meetingId = try await db.reader.read({ db in

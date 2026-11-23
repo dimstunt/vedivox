@@ -16,9 +16,11 @@ struct ListenQueueRow: Codable, Equatable {
     let line: String?
     let candidates: [ListenCandidateRow]
     let skipped: Bool
+    /// Absent from an app older than recurring voices.
+    let members: [ListenMemberRow]?
 
     enum CodingKeys: String, CodingKey {
-        case id, seconds, reason, fragment, line, candidates, skipped
+        case id, seconds, reason, fragment, line, candidates, skipped, members
         case meetingId = "meeting_id", meetingTitle = "meeting_title", speakerId = "speaker_id"
         case speakerLabel = "speaker_label", bestSimilarity = "best_similarity"
     }
@@ -28,6 +30,15 @@ struct ListenFragmentRow: Codable, Equatable {
     let from: Double
     let to: Double
     let track: String
+}
+
+struct ListenMemberRow: Codable, Equatable {
+    let meetingId: String
+    let speakerId: String
+
+    enum CodingKeys: String, CodingKey {
+        case meetingId = "meeting_id", speakerId = "speaker_id"
+    }
 }
 
 struct ListenCandidateRow: Codable, Equatable {
@@ -75,8 +86,12 @@ enum CLIListenCore {
     }
 
     static func render(_ row: ListenQueueRow) -> String {
-        let item = "\(row.meetingId.prefix(8)):\(row.speakerId.prefix(8))"
-        var lines = ["\(item)  \(row.meetingTitle) · \(row.speakerLabel) · \(minutes(row.seconds)) · best \(String(format: "%.2f", row.bestSimilarity))"]
+        let members = row.members ?? [ListenMemberRow(meetingId: row.meetingId, speakerId: row.speakerId)]
+        let item = members.map { "\($0.meetingId.prefix(8)):\($0.speakerId.prefix(8))" }.joined(separator: "+")
+        let heading = row.reason == "recurring"
+            ? "unnamed voice in \(Set(members.map(\.meetingId)).count) meetings"
+            : "\(row.meetingTitle) · \(row.speakerLabel)"
+        var lines = ["\(item)  \(heading) · \(minutes(row.seconds)) · best \(String(format: "%.2f", row.bestSimilarity))"]
         if let fragment = row.fragment {
             lines.append("    ▶ \(formatTimestamp(fragment.from))–\(formatTimestamp(fragment.to)) \(fragment.track)  «\(row.line ?? "")»")
         }
@@ -124,17 +139,19 @@ enum CLIListenCore {
             params = ["name": name]
         default: throw CLIFailure(code: 64, message: "pass exactly one of --speaker and --new")
         }
-        let voice = try resolveItem(item, db: db)
-        params["meeting_id"] = voice.meetingId
-        params["speaker_id"] = voice.speakerId
+        params.merge(try voiceParams(item, db: db)) { $1 }
         return try CLIActionCore.send(AppCommandRequest(command: AppCommandName.assignVoice, params: params))
     }
 
     static func skip(item: String, db: DatabaseReader) throws -> String {
-        let voice = try resolveItem(item, db: db)
-        return try CLIActionCore.send(AppCommandRequest(
-            command: AppCommandName.skipVoice, params: ["meeting_id": voice.meetingId, "speaker_id": voice.speakerId]
-        ))
+        try CLIActionCore.send(AppCommandRequest(command: AppCommandName.skipVoice, params: try voiceParams(item, db: db)))
+    }
+
+    /// One `meetingPrefix:speakerPrefix`, or a recurring voice's `…+…+…` — each part resolved.
+    private static func voiceParams(_ item: String, db: DatabaseReader) throws -> [String: String] {
+        let voices = try item.split(separator: "+", omittingEmptySubsequences: false).map { try resolveItem(String($0), db: db) }
+        guard voices.count > 1 else { return ["meeting_id": voices[0].meetingId, "speaker_id": voices[0].speakerId] }
+        return ["members": voices.map { "\($0.meetingId):\($0.speakerId)" }.joined(separator: "+")]
     }
 
     static func assignRange(
@@ -186,7 +203,8 @@ struct Queue: ParsableCommand {
 
     struct ListQueue: ParsableCommand {
         static let configuration = CommandConfiguration(
-            commandName: "list", abstract: "Unnamed voices that sound like a known person, most speech first."
+            commandName: "list",
+            abstract: "Unnamed voices that sound like a known person or recur across meetings, most speech first."
         )
 
         @Option(help: "Only this meeting (id or prefix).") var meeting: String?
@@ -206,7 +224,8 @@ struct Queue: ParsableCommand {
             commandName: "assign", abstract: "Give every line of the voice to a speaker; the verdict survives reprocess."
         )
 
-        @Argument(help: "Item: meetingPrefix:speakerPrefix (see `vedivox queue`).") var item: String
+        @Argument(help: "Item: meetingPrefix:speakerPrefix, or a recurring voice's parts joined by + (see `vedivox queue`).")
+        var item: String
         @Option(help: "Existing speaker id.") var speaker: String?
         @Option(name: .customLong("new"), help: "A new person's name (an existing name lands on that record).")
         var newName: String?
@@ -221,7 +240,8 @@ struct Queue: ParsableCommand {
             commandName: "skip", abstract: "Listened, no name: the voice leaves the queue, also after reprocess."
         )
 
-        @Argument(help: "Item: meetingPrefix:speakerPrefix (see `vedivox queue`).") var item: String
+        @Argument(help: "Item: meetingPrefix:speakerPrefix, or a recurring voice's parts joined by + (see `vedivox queue`).")
+        var item: String
 
         func run() throws {
             try executeCore { db in try CLIListenCore.skip(item: item, db: db) }
