@@ -5,6 +5,12 @@ What changed in Vedivox, newest first. The non-obvious controls are described in
 
 ## Unreleased
 
+### Fixed
+
+- **Meeting detection no longer stops after a meeting app or browser crashes and relaunches.**
+  Vedivox used to lose track of the relaunched app until Vedivox itself was restarted, so calls in
+  it went unrecorded ([#1](https://github.com/dimstunt/vedivox/issues/1)).
+
 ## 0.5.0 — 2026-11-19
 
 ### Added
