@@ -29,6 +29,14 @@ What changed in Vedivox, newest first. The non-obvious controls are described in
 - Reprocessing the only meeting a person speaks in no longer loses them: their lines there count
   towards their place among the candidates, so the new pass can still recognise them.
 
+### Fixed
+
+- **Meeting detection no longer loses a meeting app or browser that crashed and relaunched.**
+  Calls in it went unnoticed until the app was quit and opened again, or detection was turned off
+  and on in Settings ([#1](https://github.com/dimstunt/vedivox/issues/1)).
+- **Turning meeting detection off during a call** no longer lets one last detection through, which
+  could show "meeting detected" or start a recording right after the switch.
+
 ## 0.5.0 — 2026-11-19
 
 ### Added

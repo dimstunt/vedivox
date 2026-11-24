@@ -1627,7 +1627,6 @@ final class AppState {
         await applyDetectionConfig()
 
         // Start monitoring
-        processMonitor.start()
         await meetingDetector.start(processMonitor: processMonitor)
     }
 
@@ -1659,7 +1658,6 @@ final class AppState {
         guard detectionRunning else { return }
         detectionRunning = false
         await meetingDetector.stop()
-        processMonitor.stop()
         detectedMeeting = nil
         if !recordingVM.isRecording {
             menuBarController.updateState(.idle)

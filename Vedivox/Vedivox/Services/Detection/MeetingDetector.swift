@@ -173,6 +173,9 @@ actor MeetingDetector {
                 let calEvent = await calendarService.matchCurrentEvent(
                     watchedCalendarIDs: watchedCalendarIDs
                 )
+                // stop() may have run during any await above: a cancelled sleep still lets
+                // one poll through, and the actor is reentrant at each await.
+                guard !Task.isCancelled else { return }
                 let detection = DetectedMeetingInfo(
                     appBundleId: app.bundleId,
                     appName: app.name,

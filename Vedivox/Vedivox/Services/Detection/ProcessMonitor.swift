@@ -1,8 +1,8 @@
 import AppKit
 import Foundation
 
-/// Monitors target app launches and terminations via NSWorkspace.
-@MainActor @Observable
+/// Which meeting apps and browsers are running right now.
+@MainActor
 final class ProcessMonitor {
     /// Bundle IDs of native meeting apps to watch, with the name a detected meeting gets.
     nonisolated static let targetApps: [String: String] = [
@@ -16,59 +16,14 @@ final class ProcessMonitor {
     /// Bundle IDs of browsers whose tabs are checked for web calls (Meet, Telemost).
     nonisolated static let browserApps = Set(BrowserTabDetector.browsers.map(\.bundleId))
 
-    private(set) var runningTargetApps: Set<String> = []
-    private(set) var runningBrowsers: Set<String> = []
+    /// Read from the live process list on every poll rather than kept from launch/terminate
+    /// notifications: after a crash and relaunch the old instance's terminate can arrive after
+    /// the new one's launch, and a set keyed by bundle ID then drops an app that is running.
+    var runningTargetApps: Set<String> { Self.running(among: Set(Self.targetApps.keys)) }
+    var runningBrowsers: Set<String> { Self.running(among: Self.browserApps) }
 
-    private var launchObserver: (any NSObjectProtocol)?
-    private var terminateObserver: (any NSObjectProtocol)?
-
-    func start() {
-        // Snapshot current running apps
-        for app in NSWorkspace.shared.runningApplications {
-            guard let bid = app.bundleIdentifier else { continue }
-            if Self.targetApps.keys.contains(bid) {
-                runningTargetApps.insert(bid)
-            }
-            if Self.browserApps.contains(bid) {
-                runningBrowsers.insert(bid)
-            }
-        }
-
-        let center = NSWorkspace.shared.notificationCenter
-
-        launchObserver = center.addObserver(
-            forName: NSWorkspace.didLaunchApplicationNotification,
-            object: nil, queue: .main
-        ) { [weak self] notification in
-            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                  let bid = app.bundleIdentifier else { return }
-            MainActor.assumeIsolated {
-                if Self.targetApps.keys.contains(bid) {
-                    self?.runningTargetApps.insert(bid)
-                }
-                if Self.browserApps.contains(bid) {
-                    self?.runningBrowsers.insert(bid)
-                }
-            }
-        }
-
-        terminateObserver = center.addObserver(
-            forName: NSWorkspace.didTerminateApplicationNotification,
-            object: nil, queue: .main
-        ) { [weak self] notification in
-            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                  let bid = app.bundleIdentifier else { return }
-            MainActor.assumeIsolated {
-                self?.runningTargetApps.remove(bid)
-                self?.runningBrowsers.remove(bid)
-            }
-        }
-    }
-
-    func stop() {
-        if let obs = launchObserver { NSWorkspace.shared.notificationCenter.removeObserver(obs) }
-        if let obs = terminateObserver { NSWorkspace.shared.notificationCenter.removeObserver(obs) }
-        launchObserver = nil
-        terminateObserver = nil
+    private static func running(among ids: Set<String>) -> Set<String> {
+        // No isTerminated filter: it costs ms per app on the main thread and changes on the same run loop turn as the list.
+        Set(NSWorkspace.shared.runningApplications.lazy.compactMap(\.bundleIdentifier).filter(ids.contains))
     }
 }
