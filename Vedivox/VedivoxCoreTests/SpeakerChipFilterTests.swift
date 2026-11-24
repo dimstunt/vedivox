@@ -66,5 +66,9 @@ final class SpeakerChipFilterTests: XCTestCase {
 
         XCTAssertEqual(spoken.links, [link(m.id, ann.id)])
         XCTAssertEqual(spoken.speakers.map(\.id), [ann.id])
+
+        // The sidebar's map follows the same rule.
+        let map = try await repo.meetingSpeakerMap()
+        XCTAssertEqual(map[m.id], [ann.id])
     }
 }

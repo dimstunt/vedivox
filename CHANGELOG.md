@@ -23,6 +23,9 @@ What changed in Vedivox, newest first. The non-obvious controls are described in
 
 - A voice the diarizer split in two no longer leaves half of it unnamed: a part that sounds like
   someone already recognised on the same track of that meeting gets their name.
+- The speaker filter in the sidebar lists people, not every unnamed voice of every meeting, and a
+  voice whose lines are all hidden no longer counts as taking part — there and in the speakers line of
+  `vedivox meeting`, `list_meetings` and `get_meeting`.
 - Reprocessing the only meeting a person speaks in no longer loses them: their lines there count
   towards their place among the candidates, so the new pass can still recognise them.
 

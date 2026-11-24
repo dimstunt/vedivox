@@ -328,11 +328,27 @@ struct DatabaseReaderTests {
         let other = try insertSpeaker(db: db, name: "Other")
         try insertMeetingSpeaker(db: db, meetingId: meetingId, speakerId: me)
         try insertMeetingSpeaker(db: db, meetingId: meetingId, speakerId: other)
+        _ = try insertSegment(db: db, meetingId: meetingId, speakerId: me)
+        _ = try insertSegment(db: db, meetingId: meetingId, speakerId: other, startTime: 5, endTime: 9)
 
         let names = try db.speakerNames(forMeeting: meetingId)
         // isMe speakers sorted first
         #expect(names[0] == "Me (\u{2605})")
         #expect(names[1] == "Other")
+    }
+
+    @Test("leaves out a voice whose lines are all hidden")
+    func testSpeakerNamesSkipsHiddenOnlyVoices() throws {
+        let db = try makeTestDB()
+        let meetingId = try insertMeeting(db: db, title: "M", status: "done")
+        let spoke = try insertSpeaker(db: db, name: "Alice")
+        let hidden = try insertSpeaker(db: db, name: "speaker_3")
+        try insertMeetingSpeaker(db: db, meetingId: meetingId, speakerId: spoke)
+        try insertMeetingSpeaker(db: db, meetingId: meetingId, speakerId: hidden)
+        _ = try insertSegment(db: db, meetingId: meetingId, speakerId: spoke)
+        _ = try insertSegment(db: db, meetingId: meetingId, speakerId: hidden, startTime: 5, endTime: 9, isExcluded: true)
+
+        #expect(try db.speakerNames(forMeeting: meetingId) == ["Alice"])
     }
 
     // MARK: - seriesName

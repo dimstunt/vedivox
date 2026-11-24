@@ -42,11 +42,10 @@ struct ClusterLabeler {
         /// the audit.
         var mergeSimilarityThreshold: Float
         /// When false, unmatched clusters never mint `speaker_N` regardless of
-        /// mass — they fold or demote to UNKNOWN. Used for the mic track: its
-        /// owner is isMe, so any other voice there is either the far side's
-        /// echo from the speakers or a nearby person; minting a persona from
-        /// a degraded mic-bleed embedding is exactly how echo canonicals were
-        /// born. A real in-room speaker can be assigned manually.
+        /// mass — they fold or demote to UNKNOWN. Production leaves it on for
+        /// both tracks: other voices on the mic get a row so «participant» can
+        /// show them at once (foreign-voices-on-mic), and the foreign-voice
+        /// policy hides their lines; those rows never enter the matching pool.
         var mintNewSpeakers: Bool = true
         /// A cluster the pool rejected but which sounds like a cluster of this
         /// track already matched to someone is that person, not a new voice:

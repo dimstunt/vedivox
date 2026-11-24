@@ -617,10 +617,17 @@ struct SpeakerRepository {
     // MARK: - Meeting Speaker Mappings
 
     /// All meeting→speakers mappings in a single round-trip. Used by sidebar filter and speaker page.
+    /// A pair needs a kept line, as in `spokenLinks`: a voice whose lines are all hidden did not speak there.
     func meetingSpeakerMap() async throws -> [String: Set<String>] {
         try await db.reader.read { db in
             var result: [String: Set<String>] = [:]
-            let rows = try Row.fetchAll(db, sql: "SELECT meetingId, speakerId FROM meeting_speakers")
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT ms.meetingId, ms.speakerId FROM meeting_speakers ms
+                WHERE EXISTS (
+                    SELECT 1 FROM transcript_segments t
+                    WHERE t.speakerId = ms.speakerId AND t.meetingId = ms.meetingId AND t.isExcluded = 0
+                )
+                """)
             for row in rows {
                 let meetingId: String = row["meetingId"]
                 let speakerId: String = row["speakerId"]
