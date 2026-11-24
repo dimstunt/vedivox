@@ -21,6 +21,8 @@ What changed in Vedivox, newest first. The non-obvious controls are described in
 
 ### Fixed
 
+- A voice the diarizer split in two no longer leaves half of it unnamed: a part that sounds like
+  someone already recognised on the same track of that meeting gets their name.
 - Reprocessing the only meeting a person speaks in no longer loses them: their lines there count
   towards their place among the candidates, so the new pass can still recognise them.
 
