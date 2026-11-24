@@ -143,6 +143,40 @@ final class AudioIntegrityTests: XCTestCase {
         XCTAssertEqual(try readMono(loudOut).peak, 0.9, accuracy: 0.02)
     }
 
+    /// FluidAudio maps a 16-bit mono 16 kHz WAV in place and copies anything
+    /// else to a temporary file, twice per track: the format is what keeps
+    /// processing from writing every track to disk four times over.
+    func testRecognitionFilesAreWhatFluidAudioReadsInPlace() async throws {
+        let source = tempDir.appendingPathComponent("stereo.wav")
+        try writeWAV(seconds: 1, rate: 48000, amplitudes: [0.1, 0.1], to: source)
+        let converted = tempDir.appendingPathComponent("converted.wav")
+        try await AudioConverter.convertTo16kHzMonoWAV(input: source, output: converted)
+        let gated = tempDir.appendingPathComponent("gated.wav")
+        try AudioGate.writeSamples([0, 0.5, -0.5, 0], to: gated)
+
+        for url in [converted, gated] {
+            let settings = try AVAudioFile(forReading: url).fileFormat.settings
+            XCTAssertEqual(settings[AVFormatIDKey] as? UInt32, kAudioFormatLinearPCM)
+            XCTAssertEqual(settings[AVSampleRateKey] as? Double, 16000)
+            XCTAssertEqual(settings[AVNumberOfChannelsKey] as? Int, 1)
+            XCTAssertEqual(settings[AVLinearPCMBitDepthKey] as? Int, 16)
+            XCTAssertEqual(settings[AVLinearPCMIsFloatKey] as? Bool, false)
+        }
+    }
+
+    /// Over full scale (an AAC overshoot, a hot microphone) is clipped, not wrapped around.
+    func testSamplesOverFullScaleAreClipped() async throws {
+        let source = tempDir.appendingPathComponent("hot.wav")
+        try writeWAV(seconds: 1, rate: 48000, amplitudes: [1.4], to: source)
+        let output = tempDir.appendingPathComponent("hot-16k.wav")
+        try await AudioConverter.convertTo16kHzMonoWAV(input: source, output: output)
+
+        let samples = try AudioGate.loadSamples(from: output)
+        XCTAssertLessThanOrEqual(samples.map(abs).max() ?? 0, 1)
+        // A wrapped sine jumps across the whole range between neighbours.
+        XCTAssertLessThan(zip(samples, samples.dropFirst()).map { abs($0 - $1) }.max() ?? 0, 0.5)
+    }
+
     // MARK: - 4. Result is verified against the source
 
     func testVerifyRejectsSilenceFromASoundingSource() throws {
