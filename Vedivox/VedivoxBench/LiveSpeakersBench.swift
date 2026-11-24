@@ -161,8 +161,9 @@ final class LiveSpeakersBench: XCTestCase {
         // The first pass pays the models' cold start; keep it out of the numbers.
         let warm = (0 ..< 20 * 16000).map { 0.2 * sinf(2 * .pi * 180 * Float($0) / 16000) }
         let url = try write(warm[...], to: scratch.appendingPathComponent("warm.wav"))
+        let warmTail = try await LiveFormatBench.prepared(url)
         for pipeline in [pipelines.seeded, pipelines.empty] {
-            _ = try await pipeline.analyzeLiveTail(mic: (url, 0), system: (url, 0))
+            _ = try await pipeline.analyzeLiveTail(mic: warmTail, system: warmTail)
         }
         return pipelines
     }

@@ -72,10 +72,8 @@ final class LiveCallTrackFormatTests: XCTestCase {
         for buffer in buffers { try file.write(from: buffer) }
         XCTAssertEqual(try AVAudioFile(forReading: recording).length, 0, "the writer is open: the header holds no sizes yet")
 
-        let tail = directory.appendingPathComponent("tail.wav")
         let converted = directory.appendingPathComponent("tail_16k.wav")
-        _ = try RecordingTail.copy(last: seconds, of: recording, to: tail)
-        try await AudioConverter.convertTo16kHzMonoWAV(input: tail, output: converted)
+        _ = try RecordingTail.convert(last: seconds, of: recording, to: converted)
         _ = file
         return try AudioGate.loadSamples(from: converted)
     }

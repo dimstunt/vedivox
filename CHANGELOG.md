@@ -22,6 +22,9 @@ What changed in Vedivox, newest first. The non-obvious controls are described in
 
 ### Fixed
 
+- Vedivox writes far less to disk: the live transcript's pass, made every minute of a recording,
+  writes about 15 MB instead of 176, and processing a meeting about a fifth of what it did. The
+  files prepared for recognition are now 16-bit and written once.
 - A voice the diarizer split in two no longer leaves half of it unnamed: a part that sounds like
   someone already recognised on the same track of that meeting gets their name.
 - The speaker filter in the sidebar lists people, not every unnamed voice of every meeting, and a
