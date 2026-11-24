@@ -644,29 +644,24 @@ actor TranscriptionPipeline {
     /// transcript gets — and the microphone through recognition alone, its
     /// speaker being the owner. Reads the speaker pool, writes nothing.
     ///
-    /// Each tail is a finished audio file with the second of the recording it
-    /// starts at.
+    /// Each tail is a recognition file (`AudioConverter.convertTo16kHzMonoWAV`)
+    /// with the stretch of the recording it was made from.
     func analyzeLiveTail(
-        mic: (url: URL, from: TimeInterval)?, system: (url: URL, from: TimeInterval)?
+        mic: (url: URL, tail: RecordingTail.Tail)?, system: (url: URL, tail: RecordingTail.Tail)?
     ) async throws -> LiveTailAnalysis {
         let started = Date()
         try await warmUp()
-        let workDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("vedivox-live-tail-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: workDir) }
 
         var analysis = LiveTailAnalysis()
         if let system {
-            let duration = (try? AVAudioFile(forReading: system.url)).map { Double($0.length) / $0.fileFormat.sampleRate } ?? 0
             do {
-                let heard = try await analyzeImportAudio(
-                    playbackURL: system.url, workDir: workDir, meetingId: "", onDiarizing: {}
+                let heard = try await analyzeConverted(
+                    system.url, stats: try AudioConverter.trackStats(of: system.url), meetingId: "", onDiarizing: {}
                 )
                 let pool = try await Self.enrolledCandidates(db: db)
                 let (track, voices) = LiveTailAnalysis.system(
                     segments: heard.segments, labelToDbId: heard.labelToDbId, pool: pool,
-                    from: system.from, duration: duration
+                    from: system.tail.from, duration: system.tail.duration
                 )
                 analysis.system = track
                 analysis.voices = voices
@@ -676,14 +671,12 @@ actor TranscriptionPipeline {
             }
         }
         if let mic {
-            let converted = workDir.appendingPathComponent("mic_16k.wav")
-            try await AudioConverter.convertTo16kHzMonoWAV(input: mic.url, output: converted)
-            let duration = (try? AVAudioFile(forReading: mic.url)).map { Double($0.length) / $0.fileFormat.sampleRate } ?? 0
+            let from = mic.tail.from
             do {
-                let lines = try await transcriptionService.transcribe(converted).segments.map {
-                    LiveTailAnalysis.Line(start: mic.from + $0.startTime, end: mic.from + $0.endTime, text: $0.text)
+                let lines = try await transcriptionService.transcribe(mic.url).segments.map {
+                    LiveTailAnalysis.Line(start: from + $0.startTime, end: from + $0.endTime, text: $0.text)
                 }
-                analysis.mic = .init(from: mic.from, to: mic.from + duration, lines: lines)
+                analysis.mic = .init(from: from, to: from + mic.tail.duration, lines: lines)
             } catch {
                 Log.error("Live tail: microphone not refined — \(error.localizedDescription)")
             }
@@ -693,24 +686,24 @@ actor TranscriptionPipeline {
     }
 
     /// A precise pass over the last `tail` seconds of the files a recording is
-    /// writing: their tails are copied out read-only (`RecordingTail`), then
+    /// writing: their tails are converted read-only (`RecordingTail`), then
     /// analysed. nil when neither track could be read or the pass failed —
     /// the quick text stays as it is.
     nonisolated func refineLiveTail(mic: URL?, system: URL?, last tail: TimeInterval) async -> LiveTailAnalysis? {
         let workDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("vedivox-live-tail-copy-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("vedivox-live-tail-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: workDir) }
         do {
             try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
-            func copy(_ recording: URL?, _ name: String) -> (url: URL, from: TimeInterval)? {
+            func convert(_ recording: URL?, _ name: String) -> (url: URL, tail: RecordingTail.Tail)? {
                 guard let recording else { return nil }
                 let output = workDir.appendingPathComponent(name)
                 // A track with no audio yet, or lost, is simply not refined.
-                guard let copied = try? RecordingTail.copy(last: tail, of: recording, to: output) else { return nil }
-                return (output, copied.from)
+                guard let converted = try? RecordingTail.convert(last: tail, of: recording, to: output) else { return nil }
+                return (output, converted)
             }
-            let micTail = copy(mic, "mic.wav")
-            let systemTail = copy(system, "system.wav")
+            let micTail = convert(mic, "mic_16k.wav")
+            let systemTail = convert(system, "system_16k.wav")
             guard micTail != nil || systemTail != nil else { return nil }
             return try await analyzeLiveTail(mic: micTail, system: systemTail)
         } catch {
@@ -741,10 +734,19 @@ actor TranscriptionPipeline {
             try FileManager.default.removeItem(at: convertedURL)
         }
         try await AudioConverter.convertTo16kHzMonoWAV(input: playbackURL, output: convertedURL)
-        let micStats = try AudioConverter.verify(source: playbackURL, result: convertedURL)
+        let stats = try AudioConverter.verify(source: playbackURL, result: convertedURL)
+        return try await analyzeConverted(convertedURL, stats: stats, meetingId: meetingId, onDiarizing: onDiarizing)
+    }
 
+    /// `analyzeImportAudio` from the recognition file on.
+    private func analyzeConverted(
+        _ convertedURL: URL,
+        stats: AudioConverter.TrackStats,
+        meetingId: String,
+        onDiarizing: () async throws -> Void
+    ) async throws -> ImportAnalysis {
         let result = try await transcriptionService.transcribe(convertedURL)
-        var attention = [Self.lostTrack("mic", stats: micStats, texts: result.segments.map(\.text))].compactMap { $0 }
+        var attention = [Self.lostTrack("mic", stats: stats, texts: result.segments.map(\.text))].compactMap { $0 }
 
         var segments = result.segments.map { seg in
             TranscriptSegment(
@@ -770,7 +772,7 @@ actor TranscriptionPipeline {
             )
         } catch {
             Log.error("Diarization failed (continuing without speaker labels): \(error.localizedDescription)")
-            if micStats.sounded { attention.append("diarization") }
+            if stats.sounded { attention.append("diarization") }
         }
 
         let diarization = diarizationResult?.segments ?? []

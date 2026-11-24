@@ -50,6 +50,13 @@ final class LiveFormatBench: XCTestCase {
         let text: String
     }
 
+    /// A finished file as `analyzeLiveTail` takes it.
+    static func prepared(_ url: URL) async throws -> (url: URL, tail: RecordingTail.Tail) {
+        let output = url.deletingPathExtension().appendingPathExtension("16k.wav")
+        try await AudioConverter.convertTo16kHzMonoWAV(input: url, output: output)
+        return (output, .init(from: 0, duration: try AudioConverter.trackStats(of: url).duration))
+    }
+
     /// `audio` is 48 kHz mono: what the tap delivers, the same in both channels.
     private func compare(_ audio: [Float], reference: String?, label: String, gate: Bool) async throws {
         let scratch = FileManager.default.temporaryDirectory
@@ -101,13 +108,13 @@ final class LiveFormatBench: XCTestCase {
             return XCTFail("no precise pass over the whole file being written")
         }
         recording.finish()
-        let finished = try await pipeline.analyzeLiveTail(mic: nil, system: (recording.url, 0))
+        let finished = try await pipeline.analyzeLiveTail(mic: nil, system: try await Self.prepared(recording.url))
         // With the pad in front: a file that starts elsewhere is cut into
         // other chunks by the model, and that alone changes words.
         let mono = try Self.write(
             [Float](repeating: 0, count: lead / 3) + heard, to: scratch.appendingPathComponent("fixture.wav")
         )
-        let fixture = try await pipeline.analyzeLiveTail(mic: nil, system: (mono, 0))
+        let fixture = try await pipeline.analyzeLiveTail(mic: nil, system: try await Self.prepared(mono))
 
         func lines(_ analysis: LiveTailAnalysis) -> [Line] {
             (analysis.system?.lines ?? []).map { Line(start: $0.start, end: $0.end, text: $0.text) }

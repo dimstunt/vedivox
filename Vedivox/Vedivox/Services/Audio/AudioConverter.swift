@@ -1,6 +1,16 @@
 import AVFoundation
 import Foundation
 
+/// Audio read front to back as deinterleaved Float32.
+protocol PCMSource: AnyObject {
+    var processingFormat: AVAudioFormat { get }
+    var length: AVAudioFramePosition { get }
+    var framePosition: AVAudioFramePosition { get }
+    func read(into buffer: AVAudioPCMBuffer) throws
+}
+
+extension AVAudioFile: PCMSource {}
+
 enum AudioConverter {
     /// Extensions that `AVAudioFile(forReading:)` may open directly.
     ///
@@ -124,20 +134,67 @@ enum AudioConverter {
     /// result is peak-normalized upward so a track the system attenuated during a
     /// phone call is still recognizable.
     static func convertTo16kHzMonoWAV(input: URL, output: URL) async throws {
-        let peak = try writeMono16k(input: input, output: output)
-        if peak > 0, peak < normalizeTargetPeak {
-            let gain = normalizeTargetPeak / peak
-            try scaleInPlace(output, by: gain)
+        try convertTo16kHzMonoWAV(name: input.lastPathComponent, output: output) { try AVAudioFile(forReading: input) }
+    }
+
+    /// The same from any reader; `open` starts it over. The source is read
+    /// twice — for the peak, then to write — so that the file is written once:
+    /// a scaled second copy and the float copies FluidAudio made of it were
+    /// most of what processing wrote to disk.
+    static func convertTo16kHzMonoWAV(name: String, output: URL, open: () throws -> any PCMSource) throws {
+        let probe = try open()
+        var peak: Float = 0
+        let probeRMS = try resampleTo16kMono(probe, name: name) { buffer in
+            guard let data = buffer.floatChannelData?[0] else { return }
+            for i in 0 ..< Int(buffer.frameLength) { peak = max(peak, abs(data[i])) }
+        }
+        if !probeRMS.isEmpty {
+            let format = probe.processingFormat
+            Log.info("Prepared \(name): \(Int(format.sampleRate)) Hz \(format.channelCount)ch, first \(String(format: "%.1f", min(2, Double(probe.length) / format.sampleRate))) s RMS per channel: \(formatDBFS(probeRMS)) dBFS, output peak \(String(format: "%.1f", dBFS(peak))) dBFS")
+        }
+
+        let gain = peak > 0 && peak < normalizeTargetPeak ? normalizeTargetPeak / peak : 1
+        let file = try AVAudioFile(
+            forWriting: output, settings: recognitionSettings,
+            commonFormat: .pcmFormatFloat32, interleaved: false
+        )
+        _ = try resampleTo16kMono(try open(), name: name) { buffer in
+            if gain != 1, let data = buffer.floatChannelData?[0] {
+                for i in 0 ..< Int(buffer.frameLength) { data[i] *= gain }
+            }
+            try file.write(from: buffer)
+        }
+        if gain != 1 {
             Log.info("Normalized \(output.lastPathComponent): peak \(String(format: "%.1f", dBFS(peak))) → \(String(format: "%.1f", dBFS(normalizeTargetPeak))) dBFS (+\(String(format: "%.1f", dBFS(gain))) dB)")
         }
     }
 
-    /// Resample + fold to 16 kHz mono. Returns the peak of the written file.
-    private static func writeMono16k(input: URL, output: URL) throws -> Float {
-        let inputFile = try AVAudioFile(forReading: input)
-        let inputFormat = inputFile.processingFormat
+    /// A recognition file: 16-bit mono at 16 kHz. FluidAudio maps exactly this
+    /// in place; anything else it first copies to a temporary Float32 file, once
+    /// for recognition and once for diarization.
+    /// Samples over full scale (AAC overshoots, a hot microphone) are clipped.
+    /// Attenuating the track to fit moved more words against Float32 on ten loud
+    /// ten-minute windows: 3.6 % against 1.1 %.
+    /// shortcut: a track with a lot of overshoot may group its voices differently;
+    /// keep Float32 for it if that shows.
+    static var recognitionSettings: [String: Any] { [
+        AVFormatIDKey: kAudioFormatLinearPCM,
+        AVSampleRateKey: 16000,
+        AVNumberOfChannelsKey: 1,
+        AVLinearPCMBitDepthKey: 16,
+        AVLinearPCMIsFloatKey: false,
+        AVLinearPCMIsBigEndianKey: false,
+        AVLinearPCMIsNonInterleaved: false,
+    ] }
+
+    /// Resample + fold to 16 kHz mono Float32, buffer by buffer. Returns the
+    /// per-channel RMS of the source's first two seconds (design § решение 2).
+    private static func resampleTo16kMono(
+        _ input: any PCMSource, name: String, _ body: (AVAudioPCMBuffer) throws -> Void
+    ) throws -> [Float] {
+        let inputFormat = input.processingFormat
         let channels = Int(inputFormat.channelCount)
-        let totalFrames = inputFile.length
+        let totalFrames = input.length
 
         let outputFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false
@@ -152,32 +209,26 @@ enum AudioConverter {
         // Stereo is mixed, not remapped: remapping keeps the left channel
         // alone, and a voice in the right one never reached the transcript
         converter.downmix = true
-        let outputFile = try AVAudioFile(
-            forWriting: output, settings: outputFormat.settings,
-            commonFormat: .pcmFormatFloat32, interleaved: false
-        )
 
         let bufferCapacity: AVAudioFrameCount = 4096
         let outputBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: bufferCapacity)!
 
-        // Per-channel RMS of the first two seconds goes to the log (design § решение 2).
         let probeFrames = Int(inputFormat.sampleRate * 2)
         var probeAcc = [Float](repeating: 0, count: channels)
         var probeCount = 0
 
         var readError: Error?
-        var peak: Float = 0
 
         while true {
             var converterError: NSError?
             let status = converter.convert(to: outputBuffer, error: &converterError) { _, outStatus in
-                guard readError == nil, inputFile.framePosition < totalFrames else {
+                guard readError == nil, input.framePosition < totalFrames else {
                     outStatus.pointee = .endOfStream
                     return nil
                 }
                 let inputBuffer = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: bufferCapacity)!
                 do {
-                    try inputFile.read(into: inputBuffer)
+                    try input.read(into: inputBuffer)
                 } catch {
                     readError = error
                     outStatus.pointee = .endOfStream
@@ -198,58 +249,25 @@ enum AudioConverter {
             }
 
             if let readError {
-                Log.error("Read failed at frame \(inputFile.framePosition)/\(totalFrames) of \(input.lastPathComponent): \(readError.localizedDescription)")
+                Log.error("Read failed at frame \(input.framePosition)/\(totalFrames) of \(name): \(readError.localizedDescription)")
                 throw readError
             }
             if status == .error {
-                Log.error("Converting \(input.lastPathComponent) failed: \(converterError?.localizedDescription ?? "no error object")")
+                Log.error("Converting \(name) failed: \(converterError?.localizedDescription ?? "no error object")")
                 throw AudioConverterError.conversionFailed
             }
             if outputBuffer.frameLength == 0 || status == .endOfStream {
                 break
             }
-            if let data = outputBuffer.floatChannelData?[0] {
-                for i in 0 ..< Int(outputBuffer.frameLength) { peak = max(peak, abs(data[i])) }
-            }
-            try outputFile.write(from: outputBuffer)
+            try body(outputBuffer)
         }
 
         // A source that ends before its header says (truncated file, failed
         // read) is an error — not a shorter result.
-        if inputFile.framePosition < totalFrames {
-            throw AudioIntegrityError.sourceTruncated(read: inputFile.framePosition, expected: totalFrames)
+        if input.framePosition < totalFrames {
+            throw AudioIntegrityError.sourceTruncated(read: input.framePosition, expected: totalFrames)
         }
-
-        if probeCount > 0 {
-            let probeRMS = probeAcc.map { ($0 / Float(probeCount)).squareRoot() }
-            Log.info("Prepared \(input.lastPathComponent): \(Int(inputFormat.sampleRate)) Hz \(channels)ch, first \(String(format: "%.1f", Double(probeCount) / inputFormat.sampleRate)) s RMS per channel: \(formatDBFS(probeRMS)) dBFS, output peak \(String(format: "%.1f", dBFS(peak))) dBFS")
-        }
-        return peak
-    }
-
-    /// Multiplies every sample of a mono Float32 WAV by `gain`, via a sibling temp file.
-    private static func scaleInPlace(_ url: URL, by gain: Float) throws {
-        let tmp = url.deletingLastPathComponent().appendingPathComponent("scaling-" + url.lastPathComponent)
-        try scale(from: url, to: tmp, by: gain)
-        _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)
-    }
-
-    private static func scale(from source: URL, to destination: URL, by gain: Float) throws {
-        let src = try AVAudioFile(forReading: source)
-        let dst = try AVAudioFile(
-            forWriting: destination, settings: src.processingFormat.settings,
-            commonFormat: .pcmFormatFloat32, interleaved: false
-        )
-        let capacity: AVAudioFrameCount = 65536
-        let buffer = AVAudioPCMBuffer(pcmFormat: src.processingFormat, frameCapacity: capacity)!
-        while src.framePosition < src.length {
-            try src.read(into: buffer)
-            guard buffer.frameLength > 0, let data = buffer.floatChannelData else { break }
-            for c in 0 ..< Int(buffer.format.channelCount) {
-                for i in 0 ..< Int(buffer.frameLength) { data[c][i * buffer.stride] *= gain }
-            }
-            try dst.write(from: buffer)
-        }
+        return probeCount > 0 ? probeAcc.map { ($0 / Float(probeCount)).squareRoot() } : []
     }
 
     // MARK: - Verification (design § решение 4)

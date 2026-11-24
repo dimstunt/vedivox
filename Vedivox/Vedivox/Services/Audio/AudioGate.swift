@@ -152,11 +152,11 @@ enum AudioGate {
         return Array(UnsafeBufferPointer(start: data, count: Int(buffer.frameLength)))
     }
 
-    /// Write float samples to a mono WAV file.
-    static func writeSamples(_ samples: [Float], to url: URL, sampleRate: Double = 16000) throws {
+    /// Write float samples to a recognition file (see `recognitionSettings`).
+    static func writeSamples(_ samples: [Float], to url: URL) throws {
         let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
-            sampleRate: sampleRate,
+            sampleRate: 16000,
             channels: 1,
             interleaved: false
         )!
@@ -171,7 +171,7 @@ enum AudioGate {
 
         let file = try AVAudioFile(
             forWriting: url,
-            settings: format.settings,
+            settings: AudioConverter.recognitionSettings,
             commonFormat: .pcmFormatFloat32,
             interleaved: false
         )

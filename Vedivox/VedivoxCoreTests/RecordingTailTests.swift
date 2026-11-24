@@ -60,17 +60,32 @@ final class RecordingTailTests: XCTestCase {
         return samples
     }
 
+    /// Everything a reader of the tail gives out, block by block as the converter asks.
+    private func samples(_ reader: RecordingTail.Reader) throws -> [[Float]] {
+        var channels = [[Float]](repeating: [], count: Int(reader.processingFormat.channelCount))
+        while reader.framePosition < reader.length {
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: reader.processingFormat, frameCapacity: 4096))
+            try reader.read(into: buffer)
+            guard buffer.frameLength > 0 else { break }
+            let data = try XCTUnwrap(buffer.floatChannelData)
+            for channel in channels.indices {
+                channels[channel] += UnsafeBufferPointer(start: data[channel], count: Int(buffer.frameLength))
+            }
+        }
+        return channels
+    }
+
     func testTheTailOfAFileStillBeingWrittenIsWhatWasWritten() throws {
         let recording = directory.appendingPathComponent("mic.wav")
-        let output = directory.appendingPathComponent("tail.wav")
         let (file, format) = try writer(recording)
         try write(frames: 0 ..< 144_000, to: file, format)
 
         // The writer is still open: nothing has finalized the header, and a
         // reader that trusts it finds no audio at all.
         XCTAssertEqual(try AVAudioFile(forReading: recording).length, 0)
-        let tail = try RecordingTail.copy(last: 1, of: recording, to: output)
-        let copied = try samples(output)
+        let reader = try RecordingTail.Reader(last: 1, of: recording)
+        let tail = reader.tail
+        let copied = try samples(reader)[0]
 
         XCTAssertEqual(tail.duration, 1, accuracy: 0.001)
         XCTAssertEqual(copied.count, 48000)
@@ -84,7 +99,9 @@ final class RecordingTailTests: XCTestCase {
 
         // …and the recording goes on, untouched by the reading.
         try write(frames: 144_000 ..< 192_000, to: file, format)
-        let later = try RecordingTail.copy(last: 0.5, of: recording, to: output)
+        reader.rewind()
+        XCTAssertEqual(try samples(reader)[0], copied, "a second read is the same stretch, not what has been added since")
+        let later = try RecordingTail.Reader(last: 0.5, of: recording).tail
         XCTAssertGreaterThan(later.from, tail.from)
         _ = file
     }
@@ -94,56 +111,79 @@ final class RecordingTailTests: XCTestCase {
         do {
             let (file, format) = try writer(recording)
             try write(frames: 0 ..< 96000, to: file, format)
-            _ = try RecordingTail.copy(last: 1, of: recording, to: directory.appendingPathComponent("tail.wav"))
+            _ = try RecordingTail.convert(last: 1, of: recording, to: directory.appendingPathComponent("tail.wav"))
         }
         XCTAssertEqual(try samples(recording).count, 96000, "reading the tail cost the recording nothing")
     }
 
     /// A header as a crashed or a running writer leaves it: sizes of zero.
-    private func raw(frames: Int, channels: UInt16 = 2, trailingBytes: Int = 0) -> Data {
+    /// Channel `c` of frame `n` is n + c / 10.
+    private func raw(frames: Int, channels: UInt16 = 2, format: UInt16 = 3, trailingBytes: Int = 0) -> Data {
         func bytes<T: FixedWidthInteger>(_ value: T) -> Data { withUnsafeBytes(of: value.littleEndian) { Data($0) } }
         var data = Data("RIFF".utf8) + bytes(UInt32(0)) + Data("WAVE".utf8)
-        data += Data("fmt ".utf8) + bytes(UInt32(16)) + bytes(UInt16(1)) + bytes(channels) + bytes(UInt32(16000))
-        data += bytes(UInt32(16000) * UInt32(channels) * 2) + bytes(channels * 2) + bytes(UInt16(16))
+        data += Data("fmt ".utf8) + bytes(UInt32(16)) + bytes(format) + bytes(channels) + bytes(UInt32(16000))
+        data += bytes(UInt32(16000) * UInt32(channels) * 4) + bytes(channels * 4) + bytes(UInt16(32))
         data += Data("FLLR".utf8) + bytes(UInt32(6)) + Data(count: 6)
         data += Data("data".utf8) + bytes(UInt32(0))
-        for frame in 0 ..< frames { for _ in 0 ..< channels { data += bytes(Int16(truncatingIfNeeded: frame)) } }
+        for frame in 0 ..< frames {
+            for channel in 0 ..< channels { data += bytes((Float(frame) + Float(channel) / 10).bitPattern) }
+        }
         return data + Data(count: trailingBytes)
     }
 
     func testTheSizesInTheHeaderAreNotTrusted() throws {
         let recording = directory.appendingPathComponent("system.wav")
-        let output = directory.appendingPathComponent("tail.wav")
         // Two seconds of stereo, and half a frame the writer was in the middle of.
-        try raw(frames: 32000, trailingBytes: 2).write(to: recording)
+        try raw(frames: 32000, trailingBytes: 4).write(to: recording)
 
-        let tail = try RecordingTail.copy(last: 0.5, of: recording, to: output)
+        let reader = try RecordingTail.Reader(last: 0.5, of: recording)
 
-        XCTAssertEqual(tail, .init(from: 1.5, duration: 0.5))
-        let file = try AVAudioFile(forReading: output)
-        XCTAssertEqual(file.length, 8000, "a finished file: the reader's own header is right")
-        XCTAssertEqual(file.fileFormat.channelCount, 2)
-        XCTAssertEqual(file.fileFormat.sampleRate, 16000)
+        XCTAssertEqual(reader.tail, .init(from: 1.5, duration: 0.5))
+        XCTAssertEqual(reader.processingFormat.sampleRate, 16000)
+        let channels = try samples(reader)
+        XCTAssertEqual(channels.count, 2)
+        XCTAssertEqual(channels[0], (24000 ..< 32000).map { Float($0) })
+        XCTAssertEqual(channels[1], (24000 ..< 32000).map { Float($0) + 0.1 }, "each channel gets its own samples")
+    }
+
+    /// The point of the tail: nothing but the 16-bit recognition file is written.
+    func testTheTailIsConvertedWithoutACopy() throws {
+        let recording = directory.appendingPathComponent("mic.wav")
+        let output = directory.appendingPathComponent("tail.wav")
+        let (file, format) = try writer(recording)
+        try write(frames: 0 ..< 144_000, to: file, format)
+
+        let tail = try RecordingTail.convert(last: 1, of: recording, to: output)
+
+        XCTAssertEqual(tail.duration, 1, accuracy: 0.001)
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: directory.path)), ["mic.wav", "tail.wav"])
+        let result = try AVAudioFile(forReading: output)
+        XCTAssertEqual(result.fileFormat.settings[AVLinearPCMBitDepthKey] as? Int, 16)
+        XCTAssertEqual(Double(result.length) / 16000, 1, accuracy: 0.05)
+        _ = file
     }
 
     func testATailLongerThanTheRecordingIsTheWholeRecording() throws {
         let recording = directory.appendingPathComponent("system.wav")
         try raw(frames: 16000).write(to: recording)
-        let tail = try RecordingTail.copy(last: 300, of: recording, to: directory.appendingPathComponent("tail.wav"))
-        XCTAssertEqual(tail, .init(from: 0, duration: 1))
+        XCTAssertEqual(try RecordingTail.Reader(last: 300, of: recording).tail, .init(from: 0, duration: 1))
     }
 
     func testARecordingWithNoAudioYetAndAFileThatIsNotOneAreRefused() throws {
         let empty = directory.appendingPathComponent("empty.wav")
         try raw(frames: 0).write(to: empty)
-        let output = directory.appendingPathComponent("tail.wav")
-        XCTAssertThrowsError(try RecordingTail.copy(last: 5, of: empty, to: output)) {
+        XCTAssertThrowsError(try RecordingTail.Reader(last: 5, of: empty)) {
             XCTAssertEqual($0 as? RecordingTail.Failure, .noAudioYet)
         }
         let text = directory.appendingPathComponent("notes.wav")
         try Data("not audio at all".utf8).write(to: text)
-        XCTAssertThrowsError(try RecordingTail.copy(last: 5, of: text, to: output)) {
+        XCTAssertThrowsError(try RecordingTail.Reader(last: 5, of: text)) {
             XCTAssertEqual($0 as? RecordingTail.Failure, .notAWAVFile)
+        }
+        let integers = directory.appendingPathComponent("integers.wav")
+        try raw(frames: 16000, format: 1).write(to: integers)
+        XCTAssertThrowsError(try RecordingTail.Reader(last: 5, of: integers)) {
+            XCTAssertEqual($0 as? RecordingTail.Failure, .notFloat32)
         }
     }
 }
