@@ -23,9 +23,7 @@ final class ProcessMonitor {
     var runningBrowsers: Set<String> { Self.running(among: Self.browserApps) }
 
     private static func running(among ids: Set<String>) -> Set<String> {
-        Set(NSWorkspace.shared.runningApplications.lazy
-            .filter { !$0.isTerminated }
-            .compactMap(\.bundleIdentifier)
-            .filter(ids.contains))
+        // No isTerminated filter: it costs ms per app on the main thread and changes on the same run loop turn as the list.
+        Set(NSWorkspace.shared.runningApplications.lazy.compactMap(\.bundleIdentifier).filter(ids.contains))
     }
 }
