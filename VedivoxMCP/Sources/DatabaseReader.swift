@@ -369,6 +369,7 @@ package final class DatabaseReader: Sendable {
     ///
     /// - Parameter meetingId: The meeting ID.
     /// - Returns: Array of speaker names.
+    /// Who spoke in the meeting: a voice whose lines are all hidden is left out, as the default transcript leaves them out.
     package func speakerNames(forMeeting meetingId: String) throws -> [String] {
         try dbQueue.read { db in
             let rows = try Row.fetchAll(
@@ -378,6 +379,10 @@ package final class DatabaseReader: Sendable {
                     FROM speakers s
                     JOIN meeting_speakers ms ON ms.speakerId = s.id
                     WHERE ms.meetingId = ?
+                      AND EXISTS (
+                          SELECT 1 FROM transcript_segments t
+                          WHERE t.speakerId = s.id AND t.meetingId = ms.meetingId AND t.isExcluded = 0
+                      )
                     ORDER BY s.isMe DESC, s.nameEn
                     """,
                 arguments: [meetingId]

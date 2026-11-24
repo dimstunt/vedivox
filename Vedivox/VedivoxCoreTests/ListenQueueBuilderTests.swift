@@ -277,4 +277,147 @@ final class ListenQueueBuilderTests: XCTestCase {
         XCTAssertEqual(left, 1)
         XCTAssertEqual(left, queue.count)
     }
+
+    // MARK: Recurring voices
+
+    /// `count` meetings, each with an anonymous record of the same v2 voice.
+    @discardableResult
+    private func recurring(_ embedding: [Float], in count: Int, seconds: Double = 300) async throws -> [(Meeting, Speaker)] {
+        var made: [(Meeting, Speaker)] = []
+        for n in 0 ..< count {
+            made.append(try await meetingWithAnon(seconds: seconds + Double(n) * 100, embedding: embedding,
+                                                  diarizer: "offline", title: "R\(n)"))
+        }
+        return made
+    }
+
+    func testVoiceLikeNoOne_inThreeMeetings_isOneItem() async throws {
+        try await confirmed("Alice", v2: basis(0))
+        let made = try await recurring(basis(7), in: 3)
+
+        let queue = try await ListenQueueBuilder(db: db).build()
+
+        XCTAssertEqual(queue.count, 1)
+        let item = try XCTUnwrap(queue.first)
+        XCTAssertEqual(item.reason, .recurring(meetings: 3))
+        XCTAssertEqual(Set(item.members.map(\.speakerId)), Set(made.map(\.1.id)))
+        XCTAssertEqual(item.meetingTitle, "R2", "якорь — запись с самой длинной речью")
+        XCTAssertEqual(Set(item.fragments.map(\.meetingId)).count, 3, "по фрагменту из каждой встречи")
+        XCTAssertEqual(item.candidates.map(\.name), ["Alice"], "подсказка остаётся, хоть и далёкая")
+        XCTAssertEqual(item.segmentIds.count, 15 + 20 + 25)
+        XCTAssertEqual(Set(item.meetingTitles.values), ["R0", "R1", "R2"])
+        XCTAssertEqual(item.heading, "Unnamed voice in 3 meetings")
+    }
+
+    func testVoiceLikeNoOne_inTwoMeetings_orTwoVoices_groupApart() async throws {
+        try await recurring(basis(7), in: 2)
+        try await recurring(basis(8), in: 3)
+        try await recurring(basis(9), in: 3)
+
+        let queue = try await ListenQueueBuilder(db: db).build()
+
+        XCTAssertEqual(queue.map(\.reason), [.recurring(meetings: 3), .recurring(meetings: 3)])
+    }
+
+    func testRecurringVoice_assignedOnce_movesEveryMeeting() async throws {
+        let made = try await recurring(basis(7), in: 3)
+        let item = try await ListenQueueBuilder(db: db).build()[0]
+
+        let outcomes = try await SpeakerVerdicts(db: db)
+            .assign(meetingIds: item.meetingIds, segmentIds: item.segmentIds, to: .new(name: "Zoe"))
+
+        XCTAssertEqual(Set(outcomes.map(\.speaker.id)).count, 1, "одна персона на все встречи")
+        for (meeting, anon) in made {
+            let lines = try await meetingRepo.segments(for: meeting.id)
+            XCTAssertTrue(lines.allSatisfy { $0.speakerId == outcomes[0].speaker.id })
+            let gone = try await speakerRepo.find(anon.id)
+            XCTAssertNil(gone)
+        }
+        let left = try await ListenQueueBuilder(db: db).build()
+        XCTAssertTrue(left.isEmpty)
+    }
+
+    func testRecurringVoice_skipped_comesBackWithANewMeeting() async throws {
+        try await recurring(basis(7), in: 3)
+        let item = try await ListenQueueBuilder(db: db).build()[0]
+        try await SpeakerVerdicts(db: db).skip(meetingIds: item.meetingIds, segmentIds: item.segmentIds)
+
+        let hidden = try await ListenQueueBuilder(db: db).build()
+        let skipped = try await ListenQueueBuilder(db: db).build(skipped: true)
+        XCTAssertTrue(hidden.isEmpty)
+        XCTAssertEqual(skipped.map(\.reason), [.recurring(meetings: 3)])
+
+        try await meetingWithAnon(seconds: 300, embedding: basis(7), diarizer: "offline")
+        let back = try await ListenQueueBuilder(db: db).build()
+        XCTAssertEqual(back.map(\.reason), [.recurring(meetings: 4)])
+    }
+
+    // MARK: Split
+
+    func testSplit_givesEachLineToTheCloserPerson_unclearStays() async throws {
+        let alice = try await confirmed("Alice", v2: basis(0))
+        let bob = try await confirmed("Bob", v2: basis(1))
+        var meeting = makeMeeting(title: "Mixed", status: .done)
+        meeting.diarizer = "offline"
+        try await meetingRepo.save(meeting)
+        let anon = makeSpeaker(name: "speaker_1")
+        try await speakerRepo.save(anon)
+        try await speakerRepo.assignSpeakerToMeeting(meetingId: meeting.id, speakerId: anon.id, diarizationLabel: "speaker_1")
+        var even = basis(0)
+        even[1] = 1 // as close to Bob as to Alice
+        // A third voice: much closer to Alice than to Bob, but like neither (0.3).
+        let stranger = voice(sim: 0.3, axis: 7)
+        let voices = [basis(0), basis(1), basis(0), even, stranger]
+        try await meetingRepo.saveSegments(voices.enumerated().map { n, voice in
+            var line = makeSegment(meetingId: meeting.id, speakerId: anon.id, speakerLabel: "speaker_1", source: .system,
+                                   startTime: Double(n * 10), endTime: Double(n * 10 + 5), text: "line \(n)")
+            line.embedding = Speaker.encodeEmbedding(voice)
+            return line
+        })
+        let ids = try await meetingRepo.segments(for: meeting.id).compactMap(\.id)
+
+        let outcome = try await SpeakerVerdicts(db: db).split(meetingIds: [meeting.id], segmentIds: ids, between: [alice.id, bob.id])
+
+        XCTAssertEqual(outcome.unclear, 2)
+        let owners = try await meetingRepo.segments(for: meeting.id).map(\.speakerId)
+        XCTAssertEqual(owners, [alice.id, bob.id, alice.id, anon.id, anon.id], "чужой голос не уходит к тому, кто просто ближе")
+    }
+
+    func testSkip_doesNotRepeatMarksAlreadyThere() async throws {
+        try await recurring(basis(7), in: 3)
+        let item = try await ListenQueueBuilder(db: db).build()[0]
+        try await SpeakerVerdicts(db: db).skip(meetingIds: item.meetingIds, segmentIds: item.segmentIds)
+        let first = try await db.reader.read { try MeetingMark.fetchCount($0) }
+        try await SpeakerVerdicts(db: db).skip(meetingIds: item.meetingIds, segmentIds: item.segmentIds)
+        let second = try await db.reader.read { try MeetingMark.fetchCount($0) }
+        XCTAssertEqual(first, second)
+    }
+
+    func testMultiMeetingAssign_leavesOutAStaleMeeting() async throws {
+        let made = try await recurring(basis(7), in: 2)
+        var ids: [Int64] = []
+        for (meeting, _) in made { ids += try await meetingRepo.segments(for: meeting.id).compactMap(\.id) }
+        let outcomes = try await SpeakerVerdicts(db: db).assign(
+            meetingIds: [made[0].0.id, "no-such-meeting", made[1].0.id], segmentIds: ids, to: .new(name: "Zoe"))
+        XCTAssertEqual(outcomes.count, 2)
+    }
+
+    func testClosest_needsTheMargin() {
+        let pool = [(id: "a", canonical: basis(0)), (id: "b", canonical: basis(1))]
+        XCTAssertEqual(SpeakerVerdicts.closest(voice(sim: 0.9), among: pool, margin: 0.05, minSimilarity: 0.7), "a")
+        var near = basis(0)
+        near[1] = 0.95
+        XCTAssertNil(SpeakerVerdicts.closest(near, among: pool, margin: 0.05, minSimilarity: 0.7), "0.72 против 0.69 — меньше перевеса")
+        XCTAssertNil(SpeakerVerdicts.closest(voice(sim: 0.6, axis: 7), among: pool, margin: 0.05, minSimilarity: 0.7),
+                     "ближе к a (0.6 против 0), но на a не похож")
+    }
+
+    func testGroups_averageLinkage() {
+        let a = basis(1), b = basis(2)
+        var nearA = a
+        nearA[3] = 0.3
+        // a, b and nearA: a and nearA join (0.96), b stays apart (0).
+        let groups = ListenQueueBuilder.groups([a, b, nearA], threshold: 0.7).map { $0.sorted() }.sorted { $0[0] < $1[0] }
+        XCTAssertEqual(groups, [[0, 2], [1]])
+    }
 }

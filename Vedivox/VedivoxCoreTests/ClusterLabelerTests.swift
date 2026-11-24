@@ -96,6 +96,66 @@ final class ClusterLabelerTests: XCTestCase {
         XCTAssertEqual(labels(output), ["Alice", "speaker_1"])
     }
 
+    /// The diarizer split one person in two and only one half matched the
+    /// canonical: a big rejected cluster that sounds like that half here is
+    /// the same person, not a new `speaker_N`.
+    func testBigRejectedClusterLikeAMatchedOneJoinsIt() {
+        let alice = segments(cluster: "1", count: 10, duration: 10, embedding: [1, 0, 0, 0], startingAt: 0)
+        let half = segments(cluster: "2", count: 6, duration: 10, embedding: [0.87, 0.49, 0, 0], startingAt: 1000)
+
+        let output = ClusterLabeler(config: config).apply(
+            alice + half,
+            speakerEmbeddings: ["1": [1, 0, 0, 0], "2": [0.87, 0.49, 0, 0]],
+            matchResults: [
+                "1": .matched(speakerId: "alice-id", displayName: "Alice", confidence: 0.85),
+                "2": .unmatched(reason: .lowSimilarity(topSim: 0.6, topName: "Alice")),
+            ]
+        )
+
+        XCTAssertEqual(labels(output), ["Alice"])
+    }
+
+    /// The mic track turns the rule off: with only the owner matched there is
+    /// no second person to lead, and a voice in the room would become them.
+    func testJoinSameVoiceOffKeepsTheClusterApart() {
+        var micConfig = config
+        micConfig.joinSameVoice = false
+        let owner = segments(cluster: "1", count: 10, duration: 10, embedding: [1, 0, 0, 0], startingAt: 0)
+        let visitor = segments(cluster: "2", count: 6, duration: 10, embedding: [0.87, 0.49, 0, 0], startingAt: 1000)
+
+        let output = ClusterLabeler(config: micConfig).apply(
+            owner + visitor,
+            speakerEmbeddings: ["1": [1, 0, 0, 0], "2": [0.87, 0.49, 0, 0]],
+            matchResults: [
+                "1": .matched(speakerId: "me-id", displayName: "Me", confidence: 0.85),
+                "2": .unmatched(reason: .lowSimilarity(topSim: 0.6, topName: "Me")),
+            ]
+        )
+
+        XCTAssertEqual(labels(output), ["Me", "speaker_1"])
+    }
+
+    /// Close to two matched people at once, or not close enough: a new voice.
+    func testBigRejectedClusterWithoutAClearSameVoiceStillMints() {
+        let alice = segments(cluster: "1", count: 10, duration: 10, embedding: [1, 0, 0, 0], startingAt: 0)
+        let bob = segments(cluster: "2", count: 10, duration: 10, embedding: [0.9, 0.436, 0, 0], startingAt: 500)
+        let between = segments(cluster: "3", count: 6, duration: 10, embedding: [0.97, 0.24, 0, 0], startingAt: 1000)
+        let farther = segments(cluster: "4", count: 6, duration: 10, embedding: [0.75, 0, 0.66, 0], startingAt: 2000)
+
+        let output = ClusterLabeler(config: config).apply(
+            alice + bob + between + farther,
+            speakerEmbeddings: ["1": [1, 0, 0, 0], "2": [0.9, 0.436, 0, 0], "3": [0.97, 0.24, 0, 0], "4": [0.75, 0, 0.66, 0]],
+            matchResults: [
+                "1": .matched(speakerId: "alice-id", displayName: "Alice", confidence: 0.9),
+                "2": .matched(speakerId: "bob-id", displayName: "Bob", confidence: 0.9),
+                "3": .unmatched(reason: .lowSimilarity(topSim: 0.5, topName: "Alice")),
+                "4": .unmatched(reason: .lowSimilarity(topSim: 0.5, topName: "Alice")),
+            ]
+        )
+
+        XCTAssertEqual(labels(output), ["Alice", "Bob", "speaker_1", "speaker_2"], "0.97 к Алисе и 0.98 к Бобу — нет отрыва; 0.75 — ниже 0.80")
+    }
+
     /// A micro-cluster can fold into a speaker_N minted this run (big
     /// unmatched cluster) — fold targets include second-pass labels.
     func testMicroClusterFoldsIntoMintedSpeakerN() {

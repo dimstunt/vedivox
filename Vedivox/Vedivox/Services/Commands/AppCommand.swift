@@ -113,6 +113,7 @@ enum AppCommandName {
     static let listListenQueue = "list_listen_queue"
     static let assignVoice = "assign_voice"
     static let skipVoice = "skip_voice"
+    static let splitVoice = "split_voice"
     static let assignRange = "assign_range"
     static let pinSpeakers = "pin_speakers"
 }

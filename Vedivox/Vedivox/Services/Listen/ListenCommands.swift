@@ -6,14 +6,21 @@ import Foundation
 /// core, so the same code the app runs is what the tests run.
 enum ListenCommands {
     static let names: Set<String> = [
-        AppCommandName.listListenQueue, AppCommandName.assignVoice, AppCommandName.skipVoice,
+        AppCommandName.listListenQueue, AppCommandName.assignVoice, AppCommandName.skipVoice, AppCommandName.splitVoice,
         AppCommandName.assignRange, AppCommandName.pinSpeakers,
     ]
 
     struct QueueFragment: Codable, Equatable {
+        /// A recurring voice's longest fragment may be from another of its meetings than `meeting_id` of the row.
+        let meetingId: String
         let from: Double
         let to: Double
         let track: String
+    }
+
+    struct QueueMember: Codable, Equatable {
+        let meetingId: String
+        let speakerId: String
     }
 
     struct QueueCandidate: Codable, Equatable {
@@ -36,6 +43,8 @@ enum ListenCommands {
         let line: String?
         let candidates: [QueueCandidate]
         let skipped: Bool
+        /// Every record of the voice: one, or one per meeting of a recurring voice.
+        let members: [QueueMember]
     }
 
     struct PinRow: Codable, Equatable {
@@ -57,8 +66,8 @@ enum ListenCommands {
                 return .success("\(items.count) voice(s)", data: ["items": try encode(items.map(row))])
 
             case AppCommandName.assignVoice:
-                guard let meetingId = nonEmpty(p["meeting_id"]), let speakerId = nonEmpty(p["speaker_id"]) else {
-                    return .failure("\(request.command) needs meeting_id and speaker_id", reason: .invalidParameters)
+                guard let members = members(p) else {
+                    return .failure("\(request.command) needs meeting_id and speaker_id, or members", reason: .invalidParameters)
                 }
                 let target: SpeakerVerdicts.Target
                 switch (nonEmpty(p["target_speaker_id"]), nonEmpty(p["name"])) {
@@ -67,19 +76,45 @@ enum ListenCommands {
                 default:
                     return .failure("pass exactly one of target_speaker_id and name", reason: .invalidParameters)
                 }
-                let ids = try await voice(meetingId: meetingId, speakerId: speakerId, db: db)
-                guard !ids.isEmpty else { return voiceGone(meetingId, speakerId) }
-                let outcome = try await SpeakerVerdicts(db: db).assign(meetingId: meetingId, segmentIds: ids, to: target)
-                return .success(outcome.summary, data: ["speaker_id": outcome.speaker.id])
+                let (meetings, ids) = try await voice(members, db: db)
+                guard !ids.isEmpty else { return voiceGone(members) }
+                let outcomes = try await SpeakerVerdicts(db: db).assign(meetingIds: meetings, segmentIds: ids, to: target)
+                guard let last = outcomes.last else { return voiceGone(members) }
+                return .success(outcomes.map(\.summary).joined(separator: "\n"), data: ["speaker_id": last.speaker.id])
 
             case AppCommandName.skipVoice:
-                guard let meetingId = nonEmpty(p["meeting_id"]), let speakerId = nonEmpty(p["speaker_id"]) else {
-                    return .failure("\(request.command) needs meeting_id and speaker_id", reason: .invalidParameters)
+                guard let members = members(p) else {
+                    return .failure("\(request.command) needs meeting_id and speaker_id, or members", reason: .invalidParameters)
                 }
-                let ids = try await voice(meetingId: meetingId, speakerId: speakerId, db: db)
-                guard !ids.isEmpty else { return voiceGone(meetingId, speakerId) }
-                let intervals = try await SpeakerVerdicts(db: db).skip(meetingId: meetingId, segmentIds: ids)
+                let (meetings, ids) = try await voice(members, db: db)
+                guard !ids.isEmpty else { return voiceGone(members) }
+                let intervals = try await SpeakerVerdicts(db: db).skip(meetingIds: meetings, segmentIds: ids)
                 return .success("Skipped \(ids.count) segment(s) in \(intervals) interval(s)")
+
+            case AppCommandName.splitVoice:
+                guard let members = members(p) else {
+                    return .failure("\(request.command) needs meeting_id and speaker_id, or members", reason: .invalidParameters)
+                }
+                let candidates = (p["candidates"] ?? "").split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                guard candidates.count >= 2 else {
+                    return .failure("\(request.command) needs at least two candidates", reason: .invalidParameters)
+                }
+                var margin = SpeakerVerdicts.splitMargin
+                if let raw = nonEmpty(p["margin"]) {
+                    guard let parsed = Float(raw), parsed >= 0 else {
+                        return .failure("margin must be a non-negative number", reason: .invalidParameters)
+                    }
+                    margin = parsed
+                }
+                for id in candidates where try await SpeakerRepository(db: db).find(id)?.isConfirmed != true {
+                    return .failure("Speaker \(id) not found or not confirmed", reason: .notFound)
+                }
+                let (meetings, ids) = try await voice(members, db: db)
+                guard !ids.isEmpty else { return voiceGone(members) }
+                let outcome = try await SpeakerVerdicts(db: db)
+                    .split(meetingIds: meetings, segmentIds: ids, between: candidates, margin: margin)
+                return .success(outcome.summary)
 
             case AppCommandName.assignRange:
                 guard let meetingId = nonEmpty(p["meeting_id"]), let speakerId = nonEmpty(p["speaker_id"]),
@@ -137,7 +172,10 @@ enum ListenCommands {
     }
 
     static func row(_ item: ListenQueueItem) -> QueueRow {
-        guard case .almostKnown(let bestSim) = item.reason else { preconditionFailure("one reason in this change") }
+        let (reason, bestSim): (String, Float) = switch item.reason {
+        case .almostKnown(let sim): ("almost_known", sim)
+        case .recurring: ("recurring", item.candidates.first?.similarity ?? 0)
+        }
         return QueueRow(
             id: item.id,
             meetingId: item.members[0].meetingId,
@@ -145,25 +183,49 @@ enum ListenCommands {
             speakerId: item.members[0].speakerId,
             speakerLabel: item.speakerLabel,
             seconds: item.seconds,
-            reason: "almost_known",
+            reason: reason,
             bestSimilarity: rounded(bestSim),
-            fragment: item.anchor.map { .init(from: $0.start, to: $0.end, track: $0.track.rawValue) },
+            fragment: item.anchor.map { .init(meetingId: $0.meetingId, from: $0.start, to: $0.end, track: $0.track.rawValue) },
             line: item.anchor?.text,
             candidates: item.candidates.map { .init(speakerId: $0.speakerId, name: $0.name, similarity: rounded($0.similarity)) },
-            skipped: item.isSkipped
+            skipped: item.isSkipped,
+            members: item.members.map { .init(meetingId: $0.meetingId, speakerId: $0.speakerId) }
         )
     }
 
-    /// The lines of an item: the record's non-excluded lines in the meeting.
-    /// Empty when a reprocess replaced the record.
-    private static func voice(meetingId: String, speakerId: String, db: DatabaseManager) async throws -> [Int64] {
-        try await MeetingRepository(db: db).segments(for: meetingId)
-            .filter { $0.speakerId == speakerId && !$0.isExcluded }
-            .compactMap(\.id)
+    /// The item's records: `members` as `meetingId:speakerId+…` (a recurring
+    /// voice), else the one `meeting_id` and `speaker_id`.
+    private static func members(_ p: [String: String]) -> [ListenQueueItem.Member]? {
+        if let raw = nonEmpty(p["members"]) {
+            let pairs = raw.split(separator: "+").map { $0.split(separator: ":", omittingEmptySubsequences: false) }
+            guard pairs.allSatisfy({ $0.count == 2 && !$0[0].isEmpty && !$0[1].isEmpty }) else { return nil }
+            return pairs.map { .init(meetingId: String($0[0]), speakerId: String($0[1])) }
+        }
+        guard let meetingId = nonEmpty(p["meeting_id"]), let speakerId = nonEmpty(p["speaker_id"]) else { return nil }
+        return [.init(meetingId: meetingId, speakerId: speakerId)]
     }
 
-    private static func voiceGone(_ meetingId: String, _ speakerId: String) -> AppCommandResponse {
-        .failure("No voice \(meetingId):\(speakerId) — reprocessed or already decided", reason: .notFound)
+    /// The lines of an item: each record's non-excluded lines in its meeting,
+    /// and the meetings that still have any. Empty when reprocess replaced them all.
+    private static func voice(_ members: [ListenQueueItem.Member], db: DatabaseManager) async throws
+        -> (meetings: [String], ids: [Int64])
+    {
+        var meetings: [String] = []
+        var ids: [Int64] = []
+        for member in members {
+            let own = try await MeetingRepository(db: db).segments(for: member.meetingId)
+                .filter { $0.speakerId == member.speakerId && !$0.isExcluded }
+                .compactMap(\.id)
+            guard !own.isEmpty else { continue }
+            if !meetings.contains(member.meetingId) { meetings.append(member.meetingId) }
+            ids += own
+        }
+        return (meetings, ids)
+    }
+
+    private static func voiceGone(_ members: [ListenQueueItem.Member]) -> AppCommandResponse {
+        let what = members.map { "\($0.meetingId):\($0.speakerId)" }.joined(separator: "+")
+        return .failure("No voice \(what) — reprocessed or already decided", reason: .notFound)
     }
 
     private static func rounded(_ value: Float) -> Double { (Double(value) * 1000).rounded() / 1000 }

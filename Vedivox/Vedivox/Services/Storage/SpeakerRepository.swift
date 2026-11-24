@@ -78,9 +78,9 @@ struct SpeakerRepository {
     /// two-stage matcher to filter out low-data canonicals — they
     /// produce noisy embeddings that match unrelated voices.
     ///
-    /// `excludingMeeting`: the meeting being (re)processed. Its previous
-    /// transcript stays until the new one replaces it, and must not count —
-    /// the pool is the same as when a reprocess deleted that transcript first.
+    /// `excludingMeeting` leaves out one meeting's lines. The candidate pool
+    /// does not use it: a person whose lines all sit in the meeting being
+    /// reprocessed has to stay a candidate (`enrolledCandidates`).
     func segmentCounts(for speakerIds: [String], excludingMeeting: String? = nil) async throws -> [String: Int] {
         guard !speakerIds.isEmpty else { return [:] }
         return try await db.reader.read { db in
@@ -617,10 +617,17 @@ struct SpeakerRepository {
     // MARK: - Meeting Speaker Mappings
 
     /// All meeting→speakers mappings in a single round-trip. Used by sidebar filter and speaker page.
+    /// A pair needs a kept line, as in `spokenLinks`: a voice whose lines are all hidden did not speak there.
     func meetingSpeakerMap() async throws -> [String: Set<String>] {
         try await db.reader.read { db in
             var result: [String: Set<String>] = [:]
-            let rows = try Row.fetchAll(db, sql: "SELECT meetingId, speakerId FROM meeting_speakers")
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT ms.meetingId, ms.speakerId FROM meeting_speakers ms
+                WHERE EXISTS (
+                    SELECT 1 FROM transcript_segments t
+                    WHERE t.speakerId = ms.speakerId AND t.meetingId = ms.meetingId AND t.isExcluded = 0
+                )
+                """)
             for row in rows {
                 let meetingId: String = row["meetingId"]
                 let speakerId: String = row["speakerId"]

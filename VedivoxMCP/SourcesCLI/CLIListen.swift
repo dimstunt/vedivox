@@ -16,18 +16,36 @@ struct ListenQueueRow: Codable, Equatable {
     let line: String?
     let candidates: [ListenCandidateRow]
     let skipped: Bool
+    /// Absent from an app older than recurring voices.
+    let members: [ListenMemberRow]?
 
     enum CodingKeys: String, CodingKey {
-        case id, seconds, reason, fragment, line, candidates, skipped
+        case id, seconds, reason, fragment, line, candidates, skipped, members
         case meetingId = "meeting_id", meetingTitle = "meeting_title", speakerId = "speaker_id"
         case speakerLabel = "speaker_label", bestSimilarity = "best_similarity"
     }
 }
 
 struct ListenFragmentRow: Codable, Equatable {
+    /// Absent from an app older than recurring voices.
+    let meetingId: String?
     let from: Double
     let to: Double
     let track: String
+
+    enum CodingKeys: String, CodingKey {
+        case from, to, track
+        case meetingId = "meeting_id"
+    }
+}
+
+struct ListenMemberRow: Codable, Equatable {
+    let meetingId: String
+    let speakerId: String
+
+    enum CodingKeys: String, CodingKey {
+        case meetingId = "meeting_id", speakerId = "speaker_id"
+    }
 }
 
 struct ListenCandidateRow: Codable, Equatable {
@@ -75,10 +93,16 @@ enum CLIListenCore {
     }
 
     static func render(_ row: ListenQueueRow) -> String {
-        let item = "\(row.meetingId.prefix(8)):\(row.speakerId.prefix(8))"
-        var lines = ["\(item)  \(row.meetingTitle) · \(row.speakerLabel) · \(minutes(row.seconds)) · best \(String(format: "%.2f", row.bestSimilarity))"]
+        let members = row.members ?? [ListenMemberRow(meetingId: row.meetingId, speakerId: row.speakerId)]
+        let item = members.map { "\($0.meetingId.prefix(8)):\($0.speakerId.prefix(8))" }.joined(separator: "+")
+        let stats = "\(minutes(row.seconds)) · best \(String(format: "%.2f", row.bestSimilarity))"
+        // A recurring voice's id runs to hundreds of characters: the heading first, the id below it.
+        var lines = row.reason == "recurring"
+            ? ["unnamed voice in \(Set(members.map(\.meetingId)).count) meetings · \(stats)", "    item \(item)"]
+            : ["\(item)  \(row.meetingTitle) · \(row.speakerLabel) · \(stats)"]
         if let fragment = row.fragment {
-            lines.append("    ▶ \(formatTimestamp(fragment.from))–\(formatTimestamp(fragment.to)) \(fragment.track)  «\(row.line ?? "")»")
+            let where_ = row.reason == "recurring" ? fragment.meetingId.map { "\($0.prefix(8)) " } ?? "" : ""
+            lines.append("    ▶ \(where_)\(formatTimestamp(fragment.from))–\(formatTimestamp(fragment.to)) \(fragment.track)  «\(row.line ?? "")»")
         }
         lines.append("    " + row.candidates.enumerated().map {
             "\($0.offset + 1) \($0.element.name) \(String(format: "%.2f", $0.element.similarity))"
@@ -124,17 +148,29 @@ enum CLIListenCore {
             params = ["name": name]
         default: throw CLIFailure(code: 64, message: "pass exactly one of --speaker and --new")
         }
-        let voice = try resolveItem(item, db: db)
-        params["meeting_id"] = voice.meetingId
-        params["speaker_id"] = voice.speakerId
+        params.merge(try voiceParams(item, db: db)) { $1 }
         return try CLIActionCore.send(AppCommandRequest(command: AppCommandName.assignVoice, params: params))
     }
 
     static func skip(item: String, db: DatabaseReader) throws -> String {
-        let voice = try resolveItem(item, db: db)
-        return try CLIActionCore.send(AppCommandRequest(
-            command: AppCommandName.skipVoice, params: ["meeting_id": voice.meetingId, "speaker_id": voice.speakerId]
-        ))
+        try CLIActionCore.send(AppCommandRequest(command: AppCommandName.skipVoice, params: try voiceParams(item, db: db)))
+    }
+
+    /// A mixed voice split line by line between known people (`vedivox queue split`).
+    static func split(item: String, speakerIds: [String], margin: Double?, db: DatabaseReader) throws -> String {
+        guard Set(speakerIds).count >= 2 else { throw CLIFailure(code: 64, message: "pass --speaker at least twice") }
+        guard margin.map({ $0 >= 0 }) ?? true else { throw CLIFailure(code: 64, message: "--margin must not be negative") }
+        var params = try voiceParams(item, db: db)
+        params["candidates"] = speakerIds.joined(separator: ",")
+        if let margin { params["margin"] = String(margin) }
+        return try CLIActionCore.send(AppCommandRequest(command: AppCommandName.splitVoice, params: params))
+    }
+
+    /// One `meetingPrefix:speakerPrefix`, or a recurring voice's `…+…+…` — each part resolved.
+    private static func voiceParams(_ item: String, db: DatabaseReader) throws -> [String: String] {
+        let voices = try item.split(separator: "+", omittingEmptySubsequences: false).map { try resolveItem(String($0), db: db) }
+        guard voices.count > 1 else { return ["meeting_id": voices[0].meetingId, "speaker_id": voices[0].speakerId] }
+        return ["members": voices.map { "\($0.meetingId):\($0.speakerId)" }.joined(separator: "+")]
     }
 
     static func assignRange(
@@ -179,14 +215,15 @@ enum CLIListenCore {
 struct Queue: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "queue",
-        abstract: "Voices to check by ear: list (default), assign or skip (run through the app).",
-        subcommands: [ListQueue.self, AssignVoice.self, SkipVoice.self],
+        abstract: "Voices to check by ear: list (default), assign, skip or split (run through the app).",
+        subcommands: [ListQueue.self, AssignVoice.self, SkipVoice.self, SplitVoice.self],
         defaultSubcommand: ListQueue.self
     )
 
     struct ListQueue: ParsableCommand {
         static let configuration = CommandConfiguration(
-            commandName: "list", abstract: "Unnamed voices that sound like a known person, most speech first."
+            commandName: "list",
+            abstract: "Unnamed voices that sound like a known person or recur across meetings, most speech first."
         )
 
         @Option(help: "Only this meeting (id or prefix).") var meeting: String?
@@ -206,7 +243,8 @@ struct Queue: ParsableCommand {
             commandName: "assign", abstract: "Give every line of the voice to a speaker; the verdict survives reprocess."
         )
 
-        @Argument(help: "Item: meetingPrefix:speakerPrefix (see `vedivox queue`).") var item: String
+        @Argument(help: "Item: meetingPrefix:speakerPrefix, or a recurring voice's parts joined by + (see `vedivox queue`).")
+        var item: String
         @Option(help: "Existing speaker id.") var speaker: String?
         @Option(name: .customLong("new"), help: "A new person's name (an existing name lands on that record).")
         var newName: String?
@@ -221,10 +259,28 @@ struct Queue: ParsableCommand {
             commandName: "skip", abstract: "Listened, no name: the voice leaves the queue, also after reprocess."
         )
 
-        @Argument(help: "Item: meetingPrefix:speakerPrefix (see `vedivox queue`).") var item: String
+        @Argument(help: "Item: meetingPrefix:speakerPrefix, or a recurring voice's parts joined by + (see `vedivox queue`).")
+        var item: String
 
         func run() throws {
             try executeCore { db in try CLIListenCore.skip(item: item, db: db) }
+        }
+    }
+
+    struct SplitVoice: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "split",
+            abstract: "A voice that is several people: each line goes to the speaker it sounds closest to; unclear lines stay."
+        )
+
+        @Argument(help: "Item: meetingPrefix:speakerPrefix, or a recurring voice's parts joined by + (see `vedivox queue`).")
+        var item: String
+        @Option(name: .customLong("speaker"), help: "A speaker id to split between (repeat, at least two).")
+        var speakers: [String] = []
+        @Option(help: "How far a line's best speaker must lead the next (default 0.05).") var margin: Double?
+
+        func run() throws {
+            try executeCore { db in try CLIListenCore.split(item: item, speakerIds: speakers, margin: margin, db: db) }
         }
     }
 }

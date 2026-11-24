@@ -2,8 +2,8 @@ import Foundation
 import GRDB
 
 /// One voice to check by ear: the lines of an anonymous record in a meeting
-/// (listen-queue § 1). `members` is a list because a series voice
-/// (`unnamed-regular-detector`) will span several meetings; here it is one.
+/// (listen-queue § 1), or of the anonymous records of one unnamed voice that
+/// recurs across meetings — then `members` holds one record per meeting.
 struct ListenQueueItem: Identifiable, Equatable, Sendable {
     struct Member: Hashable, Sendable {
         let meetingId: String
@@ -12,6 +12,8 @@ struct ListenQueueItem: Identifiable, Equatable, Sendable {
 
     enum Reason: Equatable, Sendable {
         case almostKnown(bestSim: Float)
+        /// Like no confirmed person, but the same voice in this many meetings.
+        case recurring(meetings: Int)
     }
 
     /// A stretch to play: a run of the voice's lines on one track.
@@ -45,16 +47,30 @@ struct ListenQueueItem: Identifiable, Equatable, Sendable {
     /// Best first, at most `Config.candidates`.
     let candidates: [Candidate]
     let isSkipped: Bool
-    /// Every line of the item, for the decision.
+    /// Every line of the item, for the decision; spans the members' meetings.
     let segmentIds: [Int64]
+    /// Titles of the members' meetings: a recurring voice's fragments come from several.
+    var meetingTitles: [String: String] = [:]
 
     var id: String { members.map { "\($0.meetingId):\($0.speakerId)" }.joined(separator: "+") }
     var anchor: Fragment? { fragments.first }
+    /// The meetings a decision touches, each once.
+    var meetingIds: [String] {
+        var seen = Set<String>()
+        return members.map(\.meetingId).filter { seen.insert($0).inserted }
+    }
+
+    /// The row's name: the meeting and label of one record, or how far a recurring voice reaches.
+    var heading: String {
+        if case .recurring(let meetings) = reason { return "Unnamed voice in \(meetings) meetings" }
+        return "\(meetingTitle) · \(speakerLabel)"
+    }
 }
 
 /// Computes the listen queue from the database (listen-queue §§ 1–2); nothing
-/// is stored but the decisions. Source here: an anonymous voice of a finished
-/// meeting that sounds like a confirmed person.
+/// is stored but the decisions. Two sources: an anonymous voice of a finished
+/// meeting that sounds like a confirmed person, and an anonymous voice like no
+/// one that recurs in several meetings (`unnamed-regular-detector`).
 struct ListenQueueBuilder {
     struct Config {
         var minSeconds = 60.0
@@ -65,6 +81,12 @@ struct ListenQueueBuilder {
         /// Lines of one voice glue into a fragment across a pause this short
         /// when nobody else spoke on the track in between.
         var fragmentGap = 1.0
+        /// Voices of different meetings join while their mean similarity is
+        /// at least this: the matcher's accept, above 99.5% of different-person
+        /// pairs of confirmed per-meeting voices (2026-11-23, raw cosine).
+        var groupSimilarity: Float = 0.70
+        /// A group becomes an item when it spans this many meetings.
+        var groupMeetings = 3
     }
 
     private let db: DatabaseManager
@@ -83,26 +105,36 @@ struct ListenQueueBuilder {
         let voices = try await voices(meetingId: meetingId, skipped: skipped, trace: &trace)
 
         var items: [ListenQueueItem] = []
-        for voice in voices {
-            let lines = try await lines(of: voice.member)
+        for pick in voices {
+            let anchor = pick.voices[0]
+            var fragments: [ListenQueueItem.Fragment] = []
+            var segmentIds: [Int64] = []
+            for voice in pick.voices {
+                let lines = try await lines(of: voice.member)
+                let own = Self.fragments(of: voice.member.speakerId, in: lines, gap: config.fragmentGap)
+                // A recurring voice is heard across meetings: the longest stretch of each.
+                fragments += pick.voices.count == 1 ? own : Array(own.prefix(1))
+                segmentIds += lines.filter { $0.speakerId != nil }.compactMap(\.id)
+            }
             var candidates: [ListenQueueItem.Candidate] = []
-            for candidate in voice.ranked {
+            for candidate in pick.ranked {
                 candidates.append(.init(
                     speakerId: candidate.id, name: candidate.name, similarity: candidate.sim,
-                    sample: try await sample(of: candidate.id, space: voice.space, besides: voice.member.meetingId)
+                    sample: try await sample(of: candidate.id, space: anchor.space, besides: anchor.member.meetingId)
                 ))
             }
             items.append(ListenQueueItem(
-                members: [voice.member],
-                reason: .almostKnown(bestSim: voice.ranked[0].sim),
-                seconds: voice.seconds,
-                meetingTitle: voice.title,
-                meetingStart: voice.meetingStart,
-                speakerLabel: voice.label,
-                fragments: Self.fragments(of: voice.member.speakerId, in: lines, gap: config.fragmentGap),
+                members: pick.voices.map(\.member),
+                reason: pick.reason,
+                seconds: pick.voices.reduce(0) { $0 + $1.seconds },
+                meetingTitle: anchor.title,
+                meetingStart: anchor.meetingStart,
+                speakerLabel: anchor.label,
+                fragments: fragments.sorted { $0.length != $1.length ? $0.length > $1.length : $0.start < $1.start },
                 candidates: candidates,
-                isSkipped: voice.isSkipped,
-                segmentIds: lines.filter { $0.speakerId != nil }.compactMap(\.id)
+                isSkipped: pick.isSkipped,
+                segmentIds: segmentIds,
+                meetingTitles: Dictionary(pick.voices.map { ($0.member.meetingId, $0.title) }) { $1 }
             ))
         }
         trace.checkpoint("items \(items.count)")
@@ -117,7 +149,9 @@ struct ListenQueueBuilder {
         return try await voices(meetingId: meetingId, skipped: false, trace: &trace).count
     }
 
-    /// A voice that made it into the queue, before its lines are read.
+    private typealias Ranked = [(id: String, name: String, sim: Float)]
+
+    /// An anonymous record of a finished meeting with enough speech, before its lines are read.
     private struct Voice {
         let member: ListenQueueItem.Member
         let seconds: Double
@@ -125,12 +159,21 @@ struct ListenQueueBuilder {
         let meetingStart: Date
         let label: String
         let space: EmbeddingSpace
-        /// Best first, never empty.
-        let ranked: [(id: String, name: String, sim: Float)]
+        let vector: [Float]
         let isSkipped: Bool
     }
 
-    private func voices(meetingId: String?, skipped: Bool, trace: inout PerfTrace) async throws -> [Voice] {
+    /// What becomes one item: its voices, most speech first.
+    private struct Pick {
+        let voices: [Voice]
+        let reason: ListenQueueItem.Reason
+        /// Best first; never empty for `.almostKnown`.
+        let ranked: Ranked
+        /// A recurring voice comes back when a meeting adds an unskipped record.
+        var isSkipped: Bool { voices.allSatisfy(\.isSkipped) }
+    }
+
+    private func voices(meetingId: String?, skipped: Bool, trace: inout PerfTrace) async throws -> [Pick] {
         // One aggregate over every anonymous voice of a finished meeting, read
         // from idx_segments_voice alone (v27). CROSS JOIN pins the order —
         // anonymous speakers first, then their lines; left to itself the
@@ -163,33 +206,76 @@ struct ListenQueueBuilder {
             try MeetingMark.filter(MeetingMark.Columns.kind == MarkKind.skipped.rawValue).fetchAll(db)
         }, by: \.meetingId)
 
-        var voices: [Voice] = []
+        func rank(_ vector: [Float], _ space: EmbeddingSpace) -> Ranked {
+            Array((pools[space] ?? [])
+                .map { (id: $0.id, name: $0.name, sim: cosineSimilarity(vector, $0.canonical)) }
+                .sorted { $0.sim > $1.sim }
+                .prefix(config.candidates))
+        }
+
+        var picks: [Pick] = []
+        var unlike: [Voice] = []
         for row in rows {
             let member = ListenQueueItem.Member(meetingId: row["meetingId"], speakerId: row["speakerId"])
             let diarizer: String? = row["diarizer"]
             let space: EmbeddingSpace = diarizer == "offline" ? .v2 : .v1
-            guard let voice = try await meetingVoice(member), voice.count == 256 else { continue }
-
-            let ranked = (pools[space] ?? [])
-                .map { (id: $0.id, name: $0.name, sim: cosineSimilarity(voice, $0.canonical)) }
-                .sorted { $0.sim > $1.sim }
-                .prefix(config.candidates)
-            guard let best = ranked.first, best.sim >= config.minSimilarity else { continue }
+            guard let vector = try await meetingVoice(member), vector.count == 256 else { continue }
 
             var isSkipped = false
             if let marks = skips[member.meetingId] {
                 let own = try await lines(of: member).filter { $0.speakerId != nil }
                 isSkipped = Self.skippedShare(of: own, verdicts: marks) >= config.skippedCoverage
             }
-            guard isSkipped == skipped else { continue }
-
-            voices.append(Voice(
+            let voice = Voice(
                 member: member, seconds: row["seconds"], title: row["title"], meetingStart: row["meetingStart"],
-                label: row["nameEn"], space: space, ranked: Array(ranked), isSkipped: isSkipped
-            ))
+                label: row["nameEn"], space: space, vector: vector, isSkipped: isSkipped
+            )
+            let ranked = rank(vector, space)
+            if let best = ranked.first, best.sim >= config.minSimilarity {
+                picks.append(Pick(voices: [voice], reason: .almostKnown(bestSim: best.sim), ranked: ranked))
+            } else if space == .v2 {
+                // shortcut: only v2 voices group, the threshold is calibrated there; v1 meetings are legacy.
+                unlike.append(voice)
+            }
         }
-        trace.checkpoint("voices \(voices.count)")
-        return voices
+
+        for group in Self.groups(unlike.map(\.vector), threshold: config.groupSimilarity) {
+            let voices = group.map { unlike[$0] }.sorted { $0.seconds > $1.seconds }
+            let meetings = Set(voices.map(\.member.meetingId)).count
+            guard meetings >= config.groupMeetings else { continue }
+            let centroid = SpeakerRepository.naiveMean(voices.map(\.vector))
+            picks.append(Pick(voices: voices, reason: .recurring(meetings: meetings), ranked: rank(centroid, .v2)))
+        }
+        picks.removeAll { $0.isSkipped != skipped }
+        trace.checkpoint("voices \(picks.count)")
+        return picks
+    }
+
+    /// Average linkage over cosine similarity: the two closest clusters merge
+    /// while the mean similarity of their pairs is at least `threshold`.
+    /// Returns groups of indices into `vectors`.
+    static func groups(_ vectors: [[Float]], threshold: Float) -> [[Int]] {
+        var clusters = vectors.indices.map { [$0] }
+        var sim = vectors.map { a in vectors.map { b in cosineSimilarity(a, b) } }
+        while true {
+            var best: (i: Int, j: Int, sim: Float)?
+            for i in clusters.indices {
+                for j in (i + 1) ..< clusters.count where sim[i][j] >= threshold && sim[i][j] > (best?.sim ?? -2) {
+                    best = (i, j, sim[i][j])
+                }
+            }
+            guard let (i, j, _) = best else { return clusters }
+            // Lance–Williams: the merged cluster's mean similarity to every other one.
+            let (ni, nj) = (Float(clusters[i].count), Float(clusters[j].count))
+            for k in clusters.indices where k != i && k != j {
+                sim[i][k] = (ni * sim[i][k] + nj * sim[j][k]) / (ni + nj)
+                sim[k][i] = sim[i][k]
+            }
+            clusters[i] += clusters[j]
+            clusters.remove(at: j)
+            sim.remove(at: j)
+            for k in sim.indices { sim[k].remove(at: j) }
+        }
     }
 
     /// The meeting voice: mean of the DISTINCT embeddings of the record's

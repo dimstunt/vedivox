@@ -99,6 +99,115 @@ struct SpeakerVerdicts {
         return outcome
     }
 
+    /// One decision over a voice heard in several meetings (a recurring queue
+    /// item): each meeting's share of `segmentIds` goes to the same person; a
+    /// typed name creates them once. Outcomes in meeting order.
+    func assign(meetingIds: [String], segmentIds: [Int64], to target: Target) async throws -> [AssignOutcome] {
+        var target = target
+        var outcomes: [AssignOutcome] = []
+        for meetingId in meetingIds {
+            do {
+                let outcome = try await assign(meetingId: meetingId, segmentIds: segmentIds, to: target)
+                target = .existing(speakerId: outcome.speaker.id)
+                outcomes.append(outcome)
+            } catch VerdictError.noSegments {
+                // Reprocessed or trimmed since the list was built: the other meetings still count.
+                Log.info("Verdict skipped for \(meetingId): its lines changed")
+            }
+        }
+        guard !outcomes.isEmpty else { throw VerdictError.noSegments }
+        return outcomes
+    }
+
+    /// A line goes to the closest candidate only this far ahead of the runner-up.
+    static let splitMargin: Float = 0.05
+    /// …and only when it sounds like that candidate on its own: closer to two
+    /// people than to each other says nothing about a third voice. 95% of
+    /// confirmed people's own lines reach this against their canonical, 5% of
+    /// lines against the nearest other person's (2026-11-23, 20 000 lines).
+    static let splitMinSimilarity: Float = 0.70
+
+    struct SplitOutcome {
+        /// One per (meeting, person) that got lines.
+        let assigned: [AssignOutcome]
+        /// Lines no candidate won clearly; they stay where they were.
+        let unclear: Int
+
+        var summary: String {
+            (assigned.map(\.summary) + ["\(unclear) unclear segment(s) left"]).joined(separator: "\n")
+        }
+    }
+
+    /// One anonymous voice that is really two or three people: each line goes
+    /// to the candidate its own embedding is closest to, when it sounds like
+    /// them (`splitMinSimilarity`) and leads the runner-up by `margin`, through
+    /// `assign` — so verdicts and recalcs are the usual ones. Other lines stay.
+    func split(
+        meetingIds: [String], segmentIds: [Int64], between candidates: [String], margin: Float = splitMargin
+    ) async throws -> SplitOutcome {
+        let wanted = Set(segmentIds)
+        var assigned: [AssignOutcome] = []
+        var unclear = 0
+        for meetingId in meetingIds {
+            guard let meeting = try await MeetingRepository(db: db).find(meetingId) else { continue }
+            let space: EmbeddingSpace = meeting.diarizer == "offline" ? .v2 : .v1
+            let canonicals = try await SpeakerRepository(db: db).confirmedSpeakersWithEmbeddings(space: space)
+                .filter { candidates.contains($0.id) }
+                .map { (id: $0.id, canonical: $0.canonical) }
+            // Not a split without two voices to tell apart: one candidate would take every line.
+            guard canonicals.count >= 2 else {
+                unclear += try await MeetingRepository(db: db).segments(for: meetingId).filter { $0.id.map(wanted.contains) ?? false }.count
+                continue
+            }
+            var lines: [String: [Int64]] = [:]
+            for segment in try await MeetingRepository(db: db).segments(for: meetingId) {
+                guard let id = segment.id, wanted.contains(id) else { continue }
+                guard let data = segment.embedding,
+                      let winner = Self.closest(
+                          Speaker.decodeEmbedding(data), among: canonicals, margin: margin, minSimilarity: Self.splitMinSimilarity
+                      )
+                else {
+                    unclear += 1
+                    continue
+                }
+                lines[winner, default: []].append(id)
+            }
+            for (speakerId, ids) in lines.sorted(by: { $0.key < $1.key }) {
+                assigned.append(try await assign(meetingId: meetingId, segmentIds: ids, to: .existing(speakerId: speakerId)))
+            }
+        }
+        return SplitOutcome(assigned: assigned, unclear: unclear)
+    }
+
+    /// The candidate `voice` is closest to, when it reaches `minSimilarity` and
+    /// leads the runner-up by `margin`; nil with fewer than two candidates.
+    static func closest(
+        _ voice: [Float], among canonicals: [(id: String, canonical: [Float])], margin: Float, minSimilarity: Float
+    ) -> String? {
+        let ranked = canonicals.filter { $0.canonical.count == voice.count && !voice.isEmpty }
+            .map { (id: $0.id, sim: cosineSimilarity(voice, $0.canonical)) }
+            .sorted { $0.sim > $1.sim }
+        guard ranked.count > 1, let best = ranked.first, best.sim >= minSimilarity else { return nil }
+        return best.sim - ranked[1].sim >= margin ? best.id : nil
+    }
+
+    /// `skip` over each meeting of a recurring voice. Returns the intervals written.
+    @discardableResult
+    func skip(meetingIds: [String], segmentIds: [Int64]) async throws -> Int {
+        var intervals = 0
+        var found = false
+        for meetingId in meetingIds {
+            do {
+                intervals += try await skip(meetingId: meetingId, segmentIds: segmentIds)
+                found = true
+            } catch VerdictError.noSegments {
+                Log.info("Skip left out \(meetingId): its lines changed")
+            }
+        }
+        guard found else { throw VerdictError.noSegments }
+        return intervals
+    }
+
     /// One segment by id, its meeting looked up (`vedivox segment set <segment-id>`).
     func assign(segmentId: Int64, to speakerId: String) async throws -> AssignOutcome {
         guard let meetingId = try await db.reader.read({ db in
@@ -111,7 +220,14 @@ struct SpeakerVerdicts {
     /// moves. Returns how many intervals were written.
     @discardableResult
     func skip(meetingId: String, segmentIds: [Int64]) async throws -> Int {
+        // A recurring voice comes back with a new meeting: its older records are skipped already.
+        let done = try await db.reader.read { db in
+            try MeetingMark.filter(MeetingMark.Columns.kind == MarkKind.skipped.rawValue
+                && MeetingMark.Columns.meetingId == meetingId).fetchAll(db)
+        }
         let segments = try await chosen(meetingId: meetingId, segmentIds: segmentIds)
+            .filter { ListenQueueBuilder.skippedShare(of: [$0], verdicts: done) < 0.99 }
+        guard !segments.isEmpty else { return 0 }
         let intervals = try await write(
             .skipped, speakerId: nil, intervals: ForeignVoicePolicy.coalescedIntervals(of: segments),
             meetingId: meetingId, source: .manual

@@ -529,8 +529,8 @@ final class ReprocessingTests: XCTestCase {
         XCTAssertNotNil(anonymousAfter)
     }
 
-    /// While a meeting is reprocessed its old segments are still there; they
-    /// must not vouch for a speaker the new pass is about to match against.
+    /// The repository can leave one meeting out of the count; the candidate
+    /// pool does not (see `testEnrolledCandidates_…`).
     func testSegmentCounts_canLeaveOutTheMeetingBeingReprocessed() async throws {
         let (meeting, _, named) = try await makeProcessedMeeting()
         let other = makeMeeting(title: "Other", status: .done)
@@ -545,5 +545,26 @@ final class ReprocessingTests: XCTestCase {
 
         XCTAssertEqual(all[named.id], 3)
         XCTAssertEqual(withoutThisMeeting[named.id], 2)
+    }
+
+    /// A confirmed person whose every line sits in the meeting being
+    /// reprocessed stays a candidate: dropped, their lines went anonymous for good.
+    func testEnrolledCandidates_countTheLinesOfTheMeetingBeingReprocessed() async throws {
+        let (meeting, _, named) = try await makeProcessedMeeting()
+        let more = (0 ..< 5).map { n -> TranscriptSegment in
+            let start = Double(20 + n * 5)
+            return makeSegment(meetingId: meeting.id, speakerId: named.id, speakerLabel: "Alice",
+                               startTime: start, endTime: start + 4, text: "more \(n)")
+        }
+        try await meetingRepo.saveSegments(more)
+        let voice = Speaker.encodeEmbedding([Float](repeating: 0.1, count: 256))
+        try await db.writer.write { db in
+            try db.execute(sql: "UPDATE speakers SET embedding = ?, embeddingV2 = ? WHERE id = ?",
+                           arguments: [voice, voice, named.id])
+        }
+
+        let pool = try await TranscriptionPipeline.enrolledCandidates(db: db)
+
+        XCTAssertEqual(pool.first { $0.speakerId == named.id }?.segmentCount, 6)
     }
 }

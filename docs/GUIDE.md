@@ -196,7 +196,10 @@ Only when the cursor is not in a text field:
 
 ## Listen
 
-Unnamed voices that sound like a known person. Keys work when the cursor is not in a text
+Unnamed voices that sound like a known person, and unnamed voices that sound like no one you
+know but speak in three or more meetings, 60 seconds or more in each ("Unnamed voice in N meetings":
+its fragments come one from each meeting, each with its meeting's title, and a decision applies to
+all of them; they do not show under a meeting filter). Keys work when the cursor is not in a text
 field:
 
 - **Space** — play / pause the fragment (the first 15 s of the voice's longest stretch).
@@ -206,6 +209,8 @@ field:
   voice (their longest line in their latest other meeting).
 - **N** — a new person: type the name, **Return** applies, **Esc** cancels. An existing name
   lands on that person. **/** — pick another known speaker by name.
+- **X** — split: the voice is two people. Each line goes to whichever of candidates 1 and 2 it
+  sounds like; a line that does not clearly sound like one of them stays unnamed.
 - **S** — skip: listened, no name. Skipped voices stay out of the list, also after Reprocess;
   the **Skipped** checkbox shows them.
 - **O** — open the meeting at the fragment.

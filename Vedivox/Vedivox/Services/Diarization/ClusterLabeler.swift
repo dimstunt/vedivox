@@ -42,12 +42,25 @@ struct ClusterLabeler {
         /// the audit.
         var mergeSimilarityThreshold: Float
         /// When false, unmatched clusters never mint `speaker_N` regardless of
-        /// mass — they fold or demote to UNKNOWN. Used for the mic track: its
-        /// owner is isMe, so any other voice there is either the far side's
-        /// echo from the speakers or a nearby person; minting a persona from
-        /// a degraded mic-bleed embedding is exactly how echo canonicals were
-        /// born. A real in-room speaker can be assigned manually.
+        /// mass — they fold or demote to UNKNOWN. Production leaves it on for
+        /// both tracks: other voices on the mic get a row so «participant» can
+        /// show them at once (foreign-voices-on-mic), and the foreign-voice
+        /// policy hides their lines; those rows never enter the matching pool.
         var mintNewSpeakers: Bool = true
+        /// A cluster the pool rejected but which sounds like a cluster of this
+        /// track already matched to someone is that person, not a new voice:
+        /// the diarizer split one voice in two, and only one half resembled
+        /// the canonical. Same meeting, same track — the centroids share the
+        /// conditions the canonical lacks. Different named people of one
+        /// meeting and track reach 0.80 in 0.3% of pairs (2026-11-23).
+        var continuitySimilarity: Float = 0.80
+        /// …and only when that person leads every other matched one by this.
+        var continuityMargin: Float = 0.10
+        /// Off on the mic track: usually only the owner is matched there, so
+        /// the lead has nobody to measure against, and a second person in the
+        /// room reaching 0.80 would become the owner and enter their canonical.
+        /// The owner-likely mechanism covers the owner's own split halves.
+        var joinSameVoice: Bool = true
 
         static let `default` = Config(
             minNewSpeakerMassSeconds: 10,
@@ -169,10 +182,18 @@ struct ClusterLabeler {
         // (unenrolled import, stage-1 bench) speaker_N labels are the entire
         // output and demoting them would erase real speakers.
         var microClusters: [String] = []
+        let matchedClusters = idToDisplayName // first pass: enrolled matches only
         for clusterId in speakerEmbeddings.keys.sorted() {
             guard case .unmatched(let reason) = matchResults[clusterId] else { continue }
             let mass = clusterMass[clusterId] ?? 0
             if config.mintNewSpeakers, reason == .emptyPool || mass >= massFloor {
+                if config.joinSameVoice,
+                   let (label, sim) = sameVoice(as: clusterId, among: matchedClusters, speakerEmbeddings: speakerEmbeddings)
+                {
+                    idToDisplayName[clusterId] = label
+                    Log.info("Two-stage: cluster \(clusterId) → \(label) (mass \(String(format: "%.1f", mass))s, same voice as its matched cluster here, centroid sim \(String(format: "%.3f", sim)); \(describe(reason)))")
+                    continue
+                }
                 nextNew += 1
                 let label = "speaker_\(nextNew)"
                 idToDisplayName[clusterId] = label
@@ -272,6 +293,24 @@ struct ClusterLabeler {
         }
         guard let best, best.sim >= config.mergeSimilarityThreshold else { return nil }
         return best
+    }
+
+    /// The matched person of this track the cluster sounds like, when it
+    /// reaches `continuitySimilarity` and leads every other matched person by
+    /// `continuityMargin` (best centroid per person).
+    private func sameVoice(
+        as clusterId: String, among matched: [String: String], speakerEmbeddings: [String: [Float]]
+    ) -> (label: String, sim: Float)? {
+        guard let centroid = speakerEmbeddings[clusterId], !centroid.isEmpty else { return nil }
+        var bestPerLabel: [String: Float] = [:]
+        for (otherId, label) in matched {
+            guard let other = speakerEmbeddings[otherId], other.count == centroid.count else { continue }
+            bestPerLabel[label] = max(bestPerLabel[label] ?? -1, cosineSimilarity(centroid, other))
+        }
+        let ranked = bestPerLabel.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
+        guard let best = ranked.first, best.value >= config.continuitySimilarity else { return nil }
+        if ranked.count > 1, best.value - ranked[1].value < config.continuityMargin { return nil }
+        return (best.key, best.value)
     }
 
     private func describe(_ reason: SpeakerMatcher.AbstainReason) -> String {

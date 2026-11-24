@@ -38,6 +38,7 @@ struct VerbatimOutputTests {
         )
         let alice = try insertSpeaker(db: db, name: "Alice")
         try insertMeetingSpeaker(db: db, meetingId: meetingId, speakerId: alice)
+        _ = try insertSegment(db: db, meetingId: meetingId, speakerId: alice)
 
         let result = try ListMeetingsTool.run(params: [:], db: db)
         #expect(result == "1. [M1] Планёрка (\(day(start)), 1h) vedivox://meeting/M1 [Weekly] — Speakers: Alice")
@@ -53,6 +54,7 @@ struct VerbatimOutputTests {
         )
         let me = try insertSpeaker(db: db, name: "Alex", isMe: true)
         try insertMeetingSpeaker(db: db, meetingId: meetingId, speakerId: me)
+        _ = try insertSegment(db: db, meetingId: meetingId, speakerId: me)
 
         let result = try GetMeetingTool.run(params: ["meeting_id": .string("M1")], db: db)
         #expect(result == """

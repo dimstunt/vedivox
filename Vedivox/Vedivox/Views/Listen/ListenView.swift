@@ -57,7 +57,7 @@ struct ListenView: View {
         .onDisappear { viewModel.leave() }
     }
 
-    private static let actionKeys = CharacterSet(charactersIn: "123nNsSoO/")
+    private static let actionKeys = CharacterSet(charactersIn: "123nNsSoOxX/")
 
     /// Keys act only while the region holds the keyboard — never while the
     /// caret is in the name or search field (`keyboard-input`).
@@ -75,6 +75,7 @@ struct ListenView: View {
         case "n", "N": open(.newName)
         case "/": open(.search)
         case "s", "S": Task { await viewModel.skip() }
+        case "x", "X": Task { await viewModel.splitTopTwo() }
         case "o", "O": openInMeeting()
         default: break
         }
@@ -165,7 +166,7 @@ struct ListenView: View {
             ContentUnavailableView(
                 viewModel.showSkipped ? "No skipped voices" : "Nothing to listen to",
                 systemImage: "ear",
-                description: Text("Unnamed voices that sound like a known person appear here after processing.")
+                description: Text("Unnamed voices that sound like a known person, or recur in several meetings, appear here after processing.")
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
@@ -194,7 +195,7 @@ struct ListenView: View {
                 HStack(spacing: VedivoxSpace.m) {
                     Image(systemName: isSelected ? "chevron.down" : "chevron.right")
                         .frame(width: 12)
-                    Text("\(item.meetingTitle) · \(item.speakerLabel) · \(Self.duration(item.seconds))")
+                    Text("\(item.heading) · \(Self.duration(item.seconds))")
                         .vedivoxFont(.row)
                         .lineLimit(1)
                     Spacer(minLength: VedivoxSpace.m)
@@ -231,6 +232,12 @@ struct ListenView: View {
                         .help("Play / pause (Space)")
                         Text("\(formatClock(fragment.start)) – \(formatClock(fragment.end)) · \(fragment.track.rawValue)")
                             .vedivoxFont(.timecode)
+                        if item.members.count > 1, let title = item.meetingTitles[fragment.meetingId] {
+                            Text(title)
+                                .vedivoxFont(.caption)
+                                .foregroundStyle(Color.Vedivox.fgSecondary)
+                                .lineLimit(1)
+                        }
                         Spacer()
                         fragmentStep(-1, icon: "chevron.left", help: "Previous fragment (←)")
                         Text("fragment \(viewModel.fragmentIndex + 1) / \(item.fragments.count)")
@@ -273,6 +280,11 @@ struct ListenView: View {
                     Button("N  New person…") { open(.newName) }.buttonStyle(.vedivoxGhost)
                     Button("/  Other speaker…") { open(.search) }.buttonStyle(.vedivoxGhost)
                     Button("S  Skip") { Task { await viewModel.skip() } }.buttonStyle(.vedivoxGhost)
+                    if item.candidates.count >= 2 {
+                        Button("X  Split 1 / 2") { Task { await viewModel.splitTopTwo() } }
+                            .buttonStyle(.vedivoxGhost)
+                            .help("Two people in one voice: each line goes to whichever of 1 and 2 it sounds closer to")
+                    }
                     Button("O  Open in meeting") { openInMeeting() }.buttonStyle(.vedivoxGhost)
                 }
                 .disabled(viewModel.isApplying)

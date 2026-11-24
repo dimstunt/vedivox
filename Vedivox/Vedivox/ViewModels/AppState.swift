@@ -1009,10 +1009,12 @@ final class AppState {
         // up front, it was lost to any failure on the way — a track that would
         // not convert, a full disk — with every text edit and speaker made by
         // hand. What it was is kept to tell afterwards whether that happened.
+        // The old transcript as it was, for the report of who moved where.
+        let before = (try? await meetingRepo.segments(for: meetingId)) ?? []
         if discardingTranscript {
             try? await meetingRepo.deleteSegmentsAndSpeakers(for: meetingId)
         }
-        let oldSegmentIds = ((try? await meetingRepo.segments(for: meetingId)) ?? []).compactMap(\.id)
+        let oldSegmentIds = discardingTranscript ? [] : before.compactMap(\.id)
         try? await meetingRepo.updateStatus(meetingId, status: .transcribing)
 
         await loadMeetings()
@@ -1042,6 +1044,10 @@ final class AppState {
             }
             processingFailureReasons[meetingId] = nil
             Log.info("Reprocess succeeded for \(meetingId)")
+            let newSpeakers = (try? await speakerRepo.speakersForMeeting(meetingId)) ?? []
+            let names = Dictionary((oldSpeakers + newSpeakers).map { ($0.speaker.id, $0.speaker.displayName) }) { $1 }
+            let after = (try? await meetingRepo.segments(for: meetingId)) ?? []
+            Log.info("Reprocess report for \(meetingId): \(ReprocessReport(before: before, after: after, names: names).summary)")
             outcome = .success("Reprocess of “\(meeting.title)” finished")
         } catch {
             // Failed before the swap: the meeting is what it was, not a failed one.

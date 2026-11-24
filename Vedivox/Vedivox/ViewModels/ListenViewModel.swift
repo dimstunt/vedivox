@@ -243,18 +243,32 @@ final class ListenViewModel {
     func skip() async {
         guard let item = selected else { return }
         await apply(item) {
-            let intervals = try await SpeakerVerdicts(db: db).skip(meetingId: item.members[0].meetingId, segmentIds: item.segmentIds)
-            return "skipped \(item.speakerLabel) (\(item.meetingTitle)) · \(intervals) interval(s)"
+            let intervals = try await SpeakerVerdicts(db: db).skip(meetingIds: item.meetingIds, segmentIds: item.segmentIds)
+            return "skipped \(item.heading) · \(intervals) interval(s)"
+        }
+    }
+
+    /// A voice that is two people: each line to whichever of the first two candidates it sounds closer to.
+    func splitTopTwo() async {
+        guard let item = selected, item.candidates.count >= 2 else { return }
+        await apply(item) {
+            let result = try await SpeakerVerdicts(db: db).split(
+                meetingIds: item.meetingIds, segmentIds: item.segmentIds,
+                between: item.candidates.prefix(2).map(\.speakerId)
+            )
+            let moved = result.assigned.map { "\($0.speaker.displayName) \($0.segments)" }.joined(separator: ", ")
+            return "⇆ \(item.heading) → \(moved.isEmpty ? "nobody" : moved) · \(result.unclear) unclear left"
         }
     }
 
     private func decide(_ target: SpeakerVerdicts.Target) async {
         guard let item = selected else { return }
         await apply(item) {
-            let result = try await SpeakerVerdicts(db: db).assign(
-                meetingId: item.members[0].meetingId, segmentIds: item.segmentIds, to: target
+            let results = try await SpeakerVerdicts(db: db).assign(
+                meetingIds: item.meetingIds, segmentIds: item.segmentIds, to: target
             )
-            return "✓ \(item.speakerLabel) (\(item.meetingTitle)) → \(result.speaker.displayName) · "
+            guard let result = results.last else { return "nothing moved" }
+            return "✓ \(item.heading) → \(result.speaker.displayName) · "
                 + SpeakerRepository.RecalcOutcome.summary(result.target)
         }
     }
@@ -271,6 +285,7 @@ final class ListenViewModel {
         } catch {
             outcome = "Failed: \(error.localizedDescription)"
             Log.error("Listen decision on \(item.id) failed: \(error)")
+            dataChanged() // a decision over several meetings may have moved some
             return
         }
         let index = items.firstIndex { $0.id == item.id } ?? 0
