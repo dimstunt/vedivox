@@ -106,10 +106,16 @@ struct SpeakerVerdicts {
         var target = target
         var outcomes: [AssignOutcome] = []
         for meetingId in meetingIds {
-            let outcome = try await assign(meetingId: meetingId, segmentIds: segmentIds, to: target)
-            target = .existing(speakerId: outcome.speaker.id)
-            outcomes.append(outcome)
+            do {
+                let outcome = try await assign(meetingId: meetingId, segmentIds: segmentIds, to: target)
+                target = .existing(speakerId: outcome.speaker.id)
+                outcomes.append(outcome)
+            } catch VerdictError.noSegments {
+                // Reprocessed or trimmed since the list was built: the other meetings still count.
+                Log.info("Verdict skipped for \(meetingId): its lines changed")
+            }
         }
+        guard !outcomes.isEmpty else { throw VerdictError.noSegments }
         return outcomes
     }
 
@@ -148,6 +154,11 @@ struct SpeakerVerdicts {
             let canonicals = try await SpeakerRepository(db: db).confirmedSpeakersWithEmbeddings(space: space)
                 .filter { candidates.contains($0.id) }
                 .map { (id: $0.id, canonical: $0.canonical) }
+            // Not a split without two voices to tell apart: one candidate would take every line.
+            guard canonicals.count >= 2 else {
+                unclear += try await MeetingRepository(db: db).segments(for: meetingId).filter { $0.id.map(wanted.contains) ?? false }.count
+                continue
+            }
             var lines: [String: [Int64]] = [:]
             for segment in try await MeetingRepository(db: db).segments(for: meetingId) {
                 guard let id = segment.id, wanted.contains(id) else { continue }
@@ -169,15 +180,14 @@ struct SpeakerVerdicts {
     }
 
     /// The candidate `voice` is closest to, when it reaches `minSimilarity` and
-    /// leads the runner-up by `margin`.
+    /// leads the runner-up by `margin`; nil with fewer than two candidates.
     static func closest(
         _ voice: [Float], among canonicals: [(id: String, canonical: [Float])], margin: Float, minSimilarity: Float
     ) -> String? {
         let ranked = canonicals.filter { $0.canonical.count == voice.count && !voice.isEmpty }
             .map { (id: $0.id, sim: cosineSimilarity(voice, $0.canonical)) }
             .sorted { $0.sim > $1.sim }
-        guard let best = ranked.first, best.sim >= minSimilarity else { return nil }
-        guard ranked.count > 1 else { return best.id }
+        guard ranked.count > 1, let best = ranked.first, best.sim >= minSimilarity else { return nil }
         return best.sim - ranked[1].sim >= margin ? best.id : nil
     }
 
@@ -185,9 +195,16 @@ struct SpeakerVerdicts {
     @discardableResult
     func skip(meetingIds: [String], segmentIds: [Int64]) async throws -> Int {
         var intervals = 0
+        var found = false
         for meetingId in meetingIds {
-            intervals += try await skip(meetingId: meetingId, segmentIds: segmentIds)
+            do {
+                intervals += try await skip(meetingId: meetingId, segmentIds: segmentIds)
+                found = true
+            } catch VerdictError.noSegments {
+                Log.info("Skip left out \(meetingId): its lines changed")
+            }
         }
+        guard found else { throw VerdictError.noSegments }
         return intervals
     }
 
@@ -203,7 +220,14 @@ struct SpeakerVerdicts {
     /// moves. Returns how many intervals were written.
     @discardableResult
     func skip(meetingId: String, segmentIds: [Int64]) async throws -> Int {
+        // A recurring voice comes back with a new meeting: its older records are skipped already.
+        let done = try await db.reader.read { db in
+            try MeetingMark.filter(MeetingMark.Columns.kind == MarkKind.skipped.rawValue
+                && MeetingMark.Columns.meetingId == meetingId).fetchAll(db)
+        }
         let segments = try await chosen(meetingId: meetingId, segmentIds: segmentIds)
+            .filter { ListenQueueBuilder.skippedShare(of: [$0], verdicts: done) < 0.99 }
+        guard !segments.isEmpty else { return 0 }
         let intervals = try await write(
             .skipped, speakerId: nil, intervals: ForeignVoicePolicy.coalescedIntervals(of: segments),
             meetingId: meetingId, source: .manual

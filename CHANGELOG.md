@@ -11,7 +11,8 @@ What changed in Vedivox, newest first. The non-obvious controls are described in
   or more meetings shows up once, as "Unnamed voice in N meetings", with a fragment from each
   meeting. Naming it (or skipping it) applies to every meeting at once; a skipped voice comes back
   when it turns up in a new meeting. In `vedivox queue` such an item's id is its records joined
-  by `+`, and `assign` and `skip` take it as is.
+  by `+`, and `assign` and `skip` take it as is. Only meetings of the offline diarizer group, a voice
+  counts from 60 s of speech in a meeting, and a group does not show under a meeting filter.
 - **Reprocess says what it changed**: after each reprocess the log (`vedivox.log`) gets a line
   "Reprocess report for <meeting>": anonymous speech before and after, how much speech changed
   hands, and who moved to whom (`speaker_1 → Alice 4.7` minutes), largest first.
@@ -25,12 +26,10 @@ What changed in Vedivox, newest first. The non-obvious controls are described in
   someone already recognised on the same track of that meeting gets their name.
 - The speaker filter in the sidebar lists people, not every unnamed voice of every meeting, and a
   voice whose lines are all hidden no longer counts as taking part — there and in the speakers line of
-  `vedivox meeting`, `list_meetings` and `get_meeting`.
+  `vedivox list` and `vedivox show` (and their `--json`), `list_meetings` and `get_meeting`.
 - Reprocessing the only meeting a person speaks in no longer loses them: their lines there count
-  towards their place among the candidates, so the new pass can still recognise them.
-
-### Fixed
-
+  towards their place among the candidates, so the new pass can still recognise them (except in the
+  reprocess after Undo Trim, which starts from no transcript).
 - **Meeting detection no longer loses a meeting app or browser that crashed and relaunched.**
   Calls in it went unnoticed until the app was quit and opened again, or detection was turned off
   and on in Settings ([#1](https://github.com/dimstunt/vedivox/issues/1)).

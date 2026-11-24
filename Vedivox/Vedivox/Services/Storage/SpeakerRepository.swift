@@ -78,9 +78,9 @@ struct SpeakerRepository {
     /// two-stage matcher to filter out low-data canonicals — they
     /// produce noisy embeddings that match unrelated voices.
     ///
-    /// `excludingMeeting`: the meeting being (re)processed. Its previous
-    /// transcript stays until the new one replaces it, and must not count —
-    /// the pool is the same as when a reprocess deleted that transcript first.
+    /// `excludingMeeting` leaves out one meeting's lines. The candidate pool
+    /// does not use it: a person whose lines all sit in the meeting being
+    /// reprocessed has to stay a candidate (`enrolledCandidates`).
     func segmentCounts(for speakerIds: [String], excludingMeeting: String? = nil) async throws -> [String: Int] {
         guard !speakerIds.isEmpty else { return [:] }
         return try await db.reader.read { db in

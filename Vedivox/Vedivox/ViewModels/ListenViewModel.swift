@@ -285,6 +285,7 @@ final class ListenViewModel {
         } catch {
             outcome = "Failed: \(error.localizedDescription)"
             Log.error("Listen decision on \(item.id) failed: \(error)")
+            dataChanged() // a decision over several meetings may have moved some
             return
         }
         let index = items.firstIndex { $0.id == item.id } ?? 0

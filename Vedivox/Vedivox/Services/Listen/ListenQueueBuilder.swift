@@ -49,6 +49,8 @@ struct ListenQueueItem: Identifiable, Equatable, Sendable {
     let isSkipped: Bool
     /// Every line of the item, for the decision; spans the members' meetings.
     let segmentIds: [Int64]
+    /// Titles of the members' meetings: a recurring voice's fragments come from several.
+    var meetingTitles: [String: String] = [:]
 
     var id: String { members.map { "\($0.meetingId):\($0.speakerId)" }.joined(separator: "+") }
     var anchor: Fragment? { fragments.first }
@@ -131,7 +133,8 @@ struct ListenQueueBuilder {
                 fragments: fragments.sorted { $0.length != $1.length ? $0.length > $1.length : $0.start < $1.start },
                 candidates: candidates,
                 isSkipped: pick.isSkipped,
-                segmentIds: segmentIds
+                segmentIds: segmentIds,
+                meetingTitles: Dictionary(pick.voices.map { ($0.member.meetingId, $0.title) }) { $1 }
             ))
         }
         trace.checkpoint("items \(items.count)")

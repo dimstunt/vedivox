@@ -305,6 +305,7 @@ final class ListenQueueBuilderTests: XCTestCase {
         XCTAssertEqual(Set(item.fragments.map(\.meetingId)).count, 3, "по фрагменту из каждой встречи")
         XCTAssertEqual(item.candidates.map(\.name), ["Alice"], "подсказка остаётся, хоть и далёкая")
         XCTAssertEqual(item.segmentIds.count, 15 + 20 + 25)
+        XCTAssertEqual(Set(item.meetingTitles.values), ["R0", "R1", "R2"])
         XCTAssertEqual(item.heading, "Unnamed voice in 3 meetings")
     }
 
@@ -380,6 +381,25 @@ final class ListenQueueBuilderTests: XCTestCase {
         XCTAssertEqual(outcome.unclear, 2)
         let owners = try await meetingRepo.segments(for: meeting.id).map(\.speakerId)
         XCTAssertEqual(owners, [alice.id, bob.id, alice.id, anon.id, anon.id], "чужой голос не уходит к тому, кто просто ближе")
+    }
+
+    func testSkip_doesNotRepeatMarksAlreadyThere() async throws {
+        try await recurring(basis(7), in: 3)
+        let item = try await ListenQueueBuilder(db: db).build()[0]
+        try await SpeakerVerdicts(db: db).skip(meetingIds: item.meetingIds, segmentIds: item.segmentIds)
+        let first = try await db.reader.read { try MeetingMark.fetchCount($0) }
+        try await SpeakerVerdicts(db: db).skip(meetingIds: item.meetingIds, segmentIds: item.segmentIds)
+        let second = try await db.reader.read { try MeetingMark.fetchCount($0) }
+        XCTAssertEqual(first, second)
+    }
+
+    func testMultiMeetingAssign_leavesOutAStaleMeeting() async throws {
+        let made = try await recurring(basis(7), in: 2)
+        var ids: [Int64] = []
+        for (meeting, _) in made { ids += try await meetingRepo.segments(for: meeting.id).compactMap(\.id) }
+        let outcomes = try await SpeakerVerdicts(db: db).assign(
+            meetingIds: [made[0].0.id, "no-such-meeting", made[1].0.id], segmentIds: ids, to: .new(name: "Zoe"))
+        XCTAssertEqual(outcomes.count, 2)
     }
 
     func testClosest_needsTheMargin() {

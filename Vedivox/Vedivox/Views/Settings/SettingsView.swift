@@ -944,6 +944,7 @@ private struct ShortcutsSection: View {
                 shortcutRow("Hear candidate 1, 2, 3", "⌥1 / ⌥2 / ⌥3")
                 shortcutRow("New person", "N", caption: "Type the name, Return applies, Esc cancels")
                 shortcutRow("Other speaker", "/", caption: "Search confirmed speakers")
+                shortcutRow("Split between candidates 1 and 2", "X", caption: "Two people in one voice")
                 shortcutRow("Skip", "S")
                 shortcutRow("Open in meeting", "O")
             }

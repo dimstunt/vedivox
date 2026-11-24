@@ -232,6 +232,12 @@ struct ListenView: View {
                         .help("Play / pause (Space)")
                         Text("\(formatClock(fragment.start)) – \(formatClock(fragment.end)) · \(fragment.track.rawValue)")
                             .vedivoxFont(.timecode)
+                        if item.members.count > 1, let title = item.meetingTitles[fragment.meetingId] {
+                            Text(title)
+                                .vedivoxFont(.caption)
+                                .foregroundStyle(Color.Vedivox.fgSecondary)
+                                .lineLimit(1)
+                        }
                         Spacer()
                         fragmentStep(-1, icon: "chevron.left", help: "Previous fragment (←)")
                         Text("fragment \(viewModel.fragmentIndex + 1) / \(item.fragments.count)")

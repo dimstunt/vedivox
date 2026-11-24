@@ -11,6 +11,8 @@ enum ListenCommands {
     ]
 
     struct QueueFragment: Codable, Equatable {
+        /// A recurring voice's longest fragment may be from another of its meetings than `meeting_id` of the row.
+        let meetingId: String
         let from: Double
         let to: Double
         let track: String
@@ -105,6 +107,9 @@ enum ListenCommands {
                     }
                     margin = parsed
                 }
+                for id in candidates where try await SpeakerRepository(db: db).find(id)?.isConfirmed != true {
+                    return .failure("Speaker \(id) not found or not confirmed", reason: .notFound)
+                }
                 let (meetings, ids) = try await voice(members, db: db)
                 guard !ids.isEmpty else { return voiceGone(members) }
                 let outcome = try await SpeakerVerdicts(db: db)
@@ -180,7 +185,7 @@ enum ListenCommands {
             seconds: item.seconds,
             reason: reason,
             bestSimilarity: rounded(bestSim),
-            fragment: item.anchor.map { .init(from: $0.start, to: $0.end, track: $0.track.rawValue) },
+            fragment: item.anchor.map { .init(meetingId: $0.meetingId, from: $0.start, to: $0.end, track: $0.track.rawValue) },
             line: item.anchor?.text,
             candidates: item.candidates.map { .init(speakerId: $0.speakerId, name: $0.name, similarity: rounded($0.similarity)) },
             skipped: item.isSkipped,

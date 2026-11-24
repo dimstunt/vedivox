@@ -27,9 +27,16 @@ struct ListenQueueRow: Codable, Equatable {
 }
 
 struct ListenFragmentRow: Codable, Equatable {
+    /// Absent from an app older than recurring voices.
+    let meetingId: String?
     let from: Double
     let to: Double
     let track: String
+
+    enum CodingKeys: String, CodingKey {
+        case from, to, track
+        case meetingId = "meeting_id"
+    }
 }
 
 struct ListenMemberRow: Codable, Equatable {
@@ -94,7 +101,8 @@ enum CLIListenCore {
             ? ["unnamed voice in \(Set(members.map(\.meetingId)).count) meetings · \(stats)", "    item \(item)"]
             : ["\(item)  \(row.meetingTitle) · \(row.speakerLabel) · \(stats)"]
         if let fragment = row.fragment {
-            lines.append("    ▶ \(formatTimestamp(fragment.from))–\(formatTimestamp(fragment.to)) \(fragment.track)  «\(row.line ?? "")»")
+            let where_ = row.reason == "recurring" ? fragment.meetingId.map { "\($0.prefix(8)) " } ?? "" : ""
+            lines.append("    ▶ \(where_)\(formatTimestamp(fragment.from))–\(formatTimestamp(fragment.to)) \(fragment.track)  «\(row.line ?? "")»")
         }
         lines.append("    " + row.candidates.enumerated().map {
             "\($0.offset + 1) \($0.element.name) \(String(format: "%.2f", $0.element.similarity))"
@@ -207,7 +215,7 @@ enum CLIListenCore {
 struct Queue: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "queue",
-        abstract: "Voices to check by ear: list (default), assign or skip (run through the app).",
+        abstract: "Voices to check by ear: list (default), assign, skip or split (run through the app).",
         subcommands: [ListQueue.self, AssignVoice.self, SkipVoice.self, SplitVoice.self],
         defaultSubcommand: ListQueue.self
     )

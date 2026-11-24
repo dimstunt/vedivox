@@ -56,6 +56,11 @@ struct ClusterLabeler {
         var continuitySimilarity: Float = 0.80
         /// …and only when that person leads every other matched one by this.
         var continuityMargin: Float = 0.10
+        /// Off on the mic track: usually only the owner is matched there, so
+        /// the lead has nobody to measure against, and a second person in the
+        /// room reaching 0.80 would become the owner and enter their canonical.
+        /// The owner-likely mechanism covers the owner's own split halves.
+        var joinSameVoice: Bool = true
 
         static let `default` = Config(
             minNewSpeakerMassSeconds: 10,
@@ -182,7 +187,9 @@ struct ClusterLabeler {
             guard case .unmatched(let reason) = matchResults[clusterId] else { continue }
             let mass = clusterMass[clusterId] ?? 0
             if config.mintNewSpeakers, reason == .emptyPool || mass >= massFloor {
-                if let (label, sim) = sameVoice(as: clusterId, among: matchedClusters, speakerEmbeddings: speakerEmbeddings) {
+                if config.joinSameVoice,
+                   let (label, sim) = sameVoice(as: clusterId, among: matchedClusters, speakerEmbeddings: speakerEmbeddings)
+                {
                     idToDisplayName[clusterId] = label
                     Log.info("Two-stage: cluster \(clusterId) → \(label) (mass \(String(format: "%.1f", mass))s, same voice as its matched cluster here, centroid sim \(String(format: "%.3f", sim)); \(describe(reason)))")
                     continue

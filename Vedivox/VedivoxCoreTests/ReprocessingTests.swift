@@ -529,8 +529,8 @@ final class ReprocessingTests: XCTestCase {
         XCTAssertNotNil(anonymousAfter)
     }
 
-    /// While a meeting is reprocessed its old segments are still there; they
-    /// must not vouch for a speaker the new pass is about to match against.
+    /// The repository can leave one meeting out of the count; the candidate
+    /// pool does not (see `testEnrolledCandidates_…`).
     func testSegmentCounts_canLeaveOutTheMeetingBeingReprocessed() async throws {
         let (meeting, _, named) = try await makeProcessedMeeting()
         let other = makeMeeting(title: "Other", status: .done)

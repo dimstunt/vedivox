@@ -45,8 +45,8 @@ final class ReprocessReportTests: XCTestCase {
 
         let report = ReprocessReport(before: before, after: after, names: names)
 
-        XCTAssertEqual(report.moves, [.init(from: "speaker_1", to: "speaker_1 (hidden)", seconds: 10)])
-        XCTAssertEqual(report.moved, 12, "мелкое перемещение считается в сумме, но не в списке")
+        XCTAssertEqual(report.moves, [], "перенумерация безымянных и скрытие — не смена рук")
+        XCTAssertEqual(report.moved, 2, "мелкое перемещение считается в сумме, но не в списке")
         XCTAssertEqual(report.anonymousAfter, 0, "скрытые реплики безымянной речью не считаются")
     }
 

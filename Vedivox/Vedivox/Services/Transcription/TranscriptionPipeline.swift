@@ -966,9 +966,11 @@ actor TranscriptionPipeline {
         speakerEmbeddings: [String: [Float]],
         matchResults: [String: SpeakerMatcher.Resolution],
         reservedLabels: Set<String> = [],
-        boundLabels: [String: String] = [:]
+        boundLabels: [String: String] = [:],
+        joinSameVoice: Bool = true
     ) -> (segments: [DiarizationService.DiarizationSegment], labelToDbId: [String: String]) {
-        let config = ClusterLabeler.Config.fromEnvironment()
+        var config = ClusterLabeler.Config.fromEnvironment()
+        config.joinSameVoice = joinSameVoice
         let out = ClusterLabeler(config: config).apply(
             segments,
             speakerEmbeddings: speakerEmbeddings,
@@ -1152,7 +1154,8 @@ actor TranscriptionPipeline {
                     speakerEmbeddings: micDiarResult.speakerEmbeddings,
                     matchResults: micMatchResults,
                     reservedLabels: reservedLabels,
-                    boundLabels: boundLabels
+                    boundLabels: boundLabels,
+                    joinSameVoice: false
                 )
                 distinctClusters = Set(remapped.map(\.speaker)).count
                 if !remapped.isEmpty {

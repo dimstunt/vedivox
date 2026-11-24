@@ -57,6 +57,39 @@ final class ListenCommandsTests: XCTestCase {
         XCTAssertNotNil(rows[0]["fragment"] as? [String: Any])
     }
 
+    func testSplitVoice_needsTwoKnownCandidates() async throws {
+        let item = "\(meeting.id):\(anon.id)"
+        let parts = item.split(separator: ":")
+        let params = ["meeting_id": String(parts[0]), "speaker_id": String(parts[1])]
+        let one = await run(AppCommandName.splitVoice, params.merging(["candidates": alice.id]) { $1 })
+        XCTAssertFalse(one.ok)
+        XCTAssertEqual(one.reason, AppCommandResponse.Reason.invalidParameters.rawValue)
+        let typo = await run(AppCommandName.splitVoice, params.merging(["candidates": "\(alice.id),no-such"]) { $1 })
+        XCTAssertFalse(typo.ok)
+        XCTAssertEqual(typo.reason, AppCommandResponse.Reason.notFound.rawValue)
+        let anonLines = try await meetingRepo.segments(for: meeting.id).filter { $0.speakerId == anon.id }
+        XCTAssertEqual(anonLines.count, 10, "ничего не перенесено")
+    }
+
+    func testMembersParam_assignsSeveralRecordsAtOnce() async throws {
+        let other = makeMeeting(title: "DEF")
+        try await meetingRepo.save(other)
+        let anon2 = makeSpeaker(name: "speaker_2")
+        try await speakerRepo.save(anon2)
+        try await meetingRepo.saveSegments([makeSegment(meetingId: other.id, speakerId: anon2.id, startTime: 0, endTime: 10)])
+
+        let response = await run(AppCommandName.assignVoice, [
+            "members": "\(meeting.id):\(anon.id)+\(other.id):\(anon2.id)", "name": "Zoe",
+        ])
+
+        XCTAssertTrue(response.ok, response.message)
+        let zoe = try XCTUnwrap(response.data?["speaker_id"])
+        let first = try await meetingRepo.segments(for: meeting.id)
+        let second = try await meetingRepo.segments(for: other.id)
+        XCTAssertEqual(second.map(\.speakerId), [zoe])
+        XCTAssertEqual(first.filter { $0.speakerId == zoe }.count, 10)
+    }
+
     func testAssignVoice_movesEveryLine() async throws {
         let response = await run(AppCommandName.assignVoice,
                                  ["meeting_id": meeting.id, "speaker_id": anon.id, "target_speaker_id": alice.id])
