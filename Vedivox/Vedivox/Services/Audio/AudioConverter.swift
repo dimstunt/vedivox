@@ -172,8 +172,11 @@ enum AudioConverter {
     /// A recognition file: 16-bit mono at 16 kHz. FluidAudio maps exactly this
     /// in place; anything else it first copies to a temporary Float32 file, once
     /// for recognition and once for diarization.
-    /// shortcut: samples over full scale are clipped (AAC overshoots, a hot
-    /// microphone); attenuate the track instead if recognition of loud ones suffers.
+    /// Samples over full scale (AAC overshoots, a hot microphone) are clipped.
+    /// Attenuating the track to fit moved more words against Float32 on ten loud
+    /// ten-minute windows: 3.6 % against 1.1 %.
+    /// shortcut: a track with a lot of overshoot may group its voices differently;
+    /// keep Float32 for it if that shows.
     static var recognitionSettings: [String: Any] { [
         AVFormatIDKey: kAudioFormatLinearPCM,
         AVSampleRateKey: 16000,
