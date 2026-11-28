@@ -58,6 +58,8 @@ final class RecordingViewModel {
     /// The last stop that was not the after-the-meeting auto stop: it holds
     /// back an auto start for a while (`MeetingAutomation.manualStopCooldown`).
     private(set) var lastManualStopAt: Date?
+    /// The last after-the-meeting auto stop: a call back soon after records again.
+    private(set) var lastAutoStopAt: Date?
 
     var lastMicSpeechAt: Date? { audioSession.lastMicSpeechAt }
 
@@ -156,7 +158,7 @@ final class RecordingViewModel {
         guard state == .recording, !isStopping else { return false }
         isStopping = true
         defer { isStopping = false }
-        if !automatic { lastManualStopAt = Date() }
+        if automatic { lastAutoStopAt = Date() } else { lastManualStopAt = Date() }
 
         appState.notificationService.cancelMeetingEndedReminders()
         stopTimer()

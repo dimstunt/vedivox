@@ -15,7 +15,8 @@ struct DetectedMeetingInfo: Sendable {
 
 /// Orchestrates meeting detection from process, audio, and browser signals.
 ///
-/// Polls every 5 seconds, combining signals from ``AudioActivityMonitor``,
+/// Polls every 5 seconds (every second around a native-app call, see
+/// ``pollInterval(now:)``), combining signals from ``AudioActivityMonitor``,
 /// ``ProcessMonitor``, and ``BrowserTabDetector``. When a meeting app (or
 /// a Meet or Telemost tab in a browser) is both running and actively using audio, fires
 /// ``onMeetingDetected``. After `silenceThreshold` of silence (a setting,
@@ -30,6 +31,7 @@ actor MeetingDetector {
     private var currentDetection: DetectedMeetingInfo?
     private var silenceSince: Date?
     private var silenceThreshold = MeetingAutomation.defaultEndThreshold
+    private var lastEndedAt: Date?
 
     /// Callbacks fired on MainActor when detection state changes.
     private var onMeetingDetected: (@MainActor @Sendable (DetectedMeetingInfo) -> Void)?
@@ -86,11 +88,21 @@ actor MeetingDetector {
         guard pollTask == nil else { return }
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(5))
+                guard let interval = await self?.pollInterval(now: Date()) else { return }
+                try? await Task.sleep(for: .seconds(interval))
                 guard let self else { return }
                 await self.poll(processMonitor: processMonitor)
             }
         }
+    }
+
+    /// 1 s during a native-app call and for a minute after its end, so a short
+    /// auto stop is not 5 s late and a call that comes back is seen at once.
+    /// Browser calls stay at 5 s: each poll asks every tab over Apple Events.
+    private func pollInterval(now: Date) -> Int {
+        if let currentDetection { return Self.allTargetAppIds.contains(currentDetection.appBundleId) ? 1 : 5 }
+        if let lastEndedAt, now.timeIntervalSince(lastEndedAt) < 60 { return 1 }
+        return 5
     }
 
     func stop() {
@@ -194,6 +206,7 @@ actor MeetingDetector {
             } else if let since = silenceSince,
                       Date().timeIntervalSince(since) >= silenceThreshold {
                 Log.info("Meeting ended: \(currentDetection?.appBundleId ?? "?") quiet for \(Int(silenceThreshold)) s")
+                lastEndedAt = Self.allTargetAppIds.contains(currentDetection?.appBundleId ?? "") ? Date() : nil
                 currentDetection = nil
                 silenceSince = nil
                 if let callback = onMeetingEnded {

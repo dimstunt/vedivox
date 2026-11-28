@@ -229,6 +229,8 @@ final class AppState {
     /// controller pushes its state to the menu bar directly — and the
     /// `@Observable` macro cannot wrap a `lazy` stored property.
     @ObservationIgnored let dictationController: DictationController
+    /// Mic speech up to here was dictation: it does not hold a meeting's auto stop.
+    @ObservationIgnored private var lastDictationEndAt: Date?
 
     /// Floating recording indicator for dictation. Owned here because dictation
     /// runs with the main window closed, so nothing in the view hierarchy is
@@ -336,6 +338,7 @@ final class AppState {
             // to idle, but the list re-reads only on appear — a Dictations tab
             // left open kept showing the old list (seen 2026-09-01).
             if case .idle = state { Task { await self.loadDictations() } }
+            if state == .processing || state == .idle { self.lastDictationEndAt = Date() }
 
             switch state {
             case .starting: dictationHUD.show()
@@ -1586,8 +1589,12 @@ final class AppState {
                 guard !self.recordingVM.isRecording else { return }
                 let automation = MeetingAutomation.load()
                 if automation.shouldAutoStart(
-                    isRecording: false, lastManualStop: self.recordingVM.lastManualStopAt, now: Date()
+                    isRecording: false, lastManualStop: self.recordingVM.lastManualStopAt,
+                    lastAutoStop: self.recordingVM.lastAutoStopAt, now: Date()
                 ) {
+                    if let stop = self.recordingVM.lastAutoStopAt, !automation.autoStart {
+                        Log.info("Meeting detected: recording again — auto stop \(Int(Date().timeIntervalSince(stop))) s ago")
+                    }
                     Task { await self.autoStartRecording(name: detection.displayName) }
                 } else {
                     // Auto start on and not recording: only the manual-stop cooldown says no.
@@ -1606,7 +1613,14 @@ final class AppState {
                     // comes back or the recording stops.
                     self.notificationService.startMeetingEndedReminders(
                         automation: MeetingAutomation.load(),
-                        lastSpeech: { [weak self] in self?.recordingVM.lastMicSpeechAt },
+                        lastSpeech: { [weak self] in
+                            guard let self else { return nil }
+                            return MeetingAutomation.meetingSpeech(
+                                lastMicSpeech: self.recordingVM.lastMicSpeechAt,
+                                dictating: [.starting, .recording].contains(self.dictationController.state),
+                                lastDictationEnd: self.lastDictationEndAt
+                            )
+                        },
                         onAutoStop: { [weak self] in
                             guard let self else { return }
                             Task {
@@ -1831,11 +1845,12 @@ final class AppState {
         }
 
         let calendars = Self.readWatchedCalendarIDs()
-        Log.info("Detection config: apps=\(enabledApps.sorted().joined(separator: ",")), watched calendars=\(calendars.count)")
+        let endThreshold = MeetingAutomation.load().detectorThreshold
+        Log.info("Detection config: apps=\(enabledApps.sorted().joined(separator: ",")), watched calendars=\(calendars.count), end after \(Int(endThreshold)) s")
         await meetingDetector.updateConfig(
             enabledApps: enabledApps,
             watchedCalendarIDs: calendars,
-            endThreshold: MeetingAutomation.load().endThreshold
+            endThreshold: endThreshold
         )
     }
 

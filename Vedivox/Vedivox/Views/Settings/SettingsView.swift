@@ -587,6 +587,10 @@ private struct MeetingsSection: View {
     private var endThreshold = MeetingAutomation.defaultEndThreshold
     @AppStorage(MeetingAutomation.reminderIntervalKey)
     private var reminderInterval = MeetingAutomation.defaultReminderInterval
+    @AppStorage(MeetingAutomation.autoStopDelayKey)
+    private var autoStopDelay = MeetingAutomation.defaultAutoStopDelay
+    @AppStorage(MeetingAutomation.speechHoldKey)
+    private var speechHold = MeetingAutomation.defaultSpeechHold
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -636,24 +640,38 @@ private struct MeetingsSection: View {
                     SettingsRow(
                         label: "When a meeting ends",
                         caption: autoStop
-                            ? "Warns first, stops after one more reminder interval of quiet — a room change or a reconnect doesn\u{2019}t cut the recording"
+                            ? "Warns with a countdown first; a call that comes back within 2 minutes records again"
                             : "Reminds you to stop until the meeting resumes or the recording stops; no repeats while the mic hears speech"
                     ) {
                         VedivoxPicker(selection: $autoStop, options: [(false, "Remind me to stop"), (true, "Stop recording")])
                             .frame(width: 220)
                     }
-                    SettingsRow(
-                        label: "Meeting counts as ended after",
-                        caption: "This long after the call stops using the mic (Google Meet, Telemost in a browser: the browser\u{2019}s audio). Starts the reminders or the auto stop."
-                    ) {
-                        VedivoxPicker(selection: $endThreshold, options: Self.choices([10, 15, 30, 60], including: endThreshold))
-                            .frame(width: 220)
+                    if autoStop {
+                        SettingsRow(
+                            label: "Stop recording after",
+                            caption: "This long after the call stops using the mic (Google Meet, Telemost in a browser: the browser\u{2019}s audio)"
+                        ) {
+                            VedivoxPicker(selection: $autoStopDelay, options: Self.choices([5, 10, 15, 30, 60, 120], including: autoStopDelay))
+                                .frame(width: 220)
+                        }
+                    } else {
+                        SettingsRow(
+                            label: "Meeting counts as ended after",
+                            caption: "This long after the call stops using the mic (Google Meet, Telemost in a browser: the browser\u{2019}s audio). Starts the reminders."
+                        ) {
+                            VedivoxPicker(selection: $endThreshold, options: Self.choices([10, 15, 30, 60], including: endThreshold))
+                                .frame(width: 220)
+                        }
+                        SettingsRow(label: "Reminder interval") {
+                            VedivoxPicker(selection: $reminderInterval, options: Self.choices([30, 60, 120, 300], including: reminderInterval))
+                                .frame(width: 220)
+                        }
                     }
                     SettingsRow(
-                        label: "Reminder interval",
-                        caption: autoStop ? "With Stop recording, also how long the warning waits before stopping" : nil
+                        label: "Wait after speech",
+                        caption: "The mic heard you this recently: the conversation goes on, so no \(autoStop ? "stop" : "repeat reminder") yet"
                     ) {
-                        VedivoxPicker(selection: $reminderInterval, options: Self.choices([30, 60, 120, 300], including: reminderInterval))
+                        VedivoxPicker(selection: $speechHold, options: Self.choices([0, 5, 10, 30], including: speechHold))
                             .frame(width: 220)
                     }
                 }
@@ -662,7 +680,8 @@ private struct MeetingsSection: View {
             .onChange(of: [detectZoom, detectGoogleMeet, detectSlackHuddle, detectTeams, detectTelemost]) {
                 Task { await appState.applyDetectionConfig() }
             }
-            .onChange(of: endThreshold) {
+            // The detector's end threshold depends on all three (`detectorThreshold`).
+            .onChange(of: [endThreshold, autoStopDelay, autoStop ? 1 : 0]) {
                 Task { await appState.applyDetectionConfig() }
             }
 
@@ -676,7 +695,7 @@ private struct MeetingsSection: View {
     /// picker shows it instead of a blank.
     private static func choices(_ presets: [Double], including value: Double) -> [(Double, String)] {
         (presets.contains(value) ? presets : [value] + presets)
-            .map { ($0, $0 < 60 ? "\(Int($0)) s" : "\(Int($0 / 60)) min") }
+            .map { ($0, $0 == 0 ? "Off" : $0 < 60 ? "\(Int($0)) s" : "\(Int($0 / 60)) min") }
     }
 }
 

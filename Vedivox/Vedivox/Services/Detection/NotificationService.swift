@@ -173,7 +173,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
                 let speech = lastSpeech()
                 switch automation.afterMeetingEnded(lastReminder: lastReminder, lastSpeech: speech, now: Date()) {
                 case .remind:
-                    self?.notifyMeetingEnded(autoStop: automation.autoStop, interval: automation.reminderInterval)
+                    self?.notifyMeetingEnded(autoStop: automation.autoStop, interval: automation.waitAfterReminder)
                     lastReminder = Date()
                 case .stop:
                     onAutoStop()
@@ -190,7 +190,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
                 try? await Task.sleep(for: .seconds(1))
             }
         }
-        Log.info("Meeting-ended reminders started (every \(Int(automation.reminderInterval))s, auto stop \(automation.autoStop))")
+        Log.info("Meeting-ended reminders started (every \(Int(automation.waitAfterReminder))s, auto stop \(automation.autoStop), speech hold \(Int(automation.speechHold))s)")
     }
 
     /// Stop the reminder loop and clear any delivered reminder from Notification Center.

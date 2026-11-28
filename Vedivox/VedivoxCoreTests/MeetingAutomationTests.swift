@@ -12,6 +12,8 @@ final class MeetingAutomationTests: XCTestCase {
         XCTAssertFalse(automation.autoStop)
         XCTAssertEqual(automation.endThreshold, 15)
         XCTAssertEqual(automation.reminderInterval, 60)
+        XCTAssertEqual(automation.autoStopDelay, 10)
+        XCTAssertEqual(automation.speechHold, 10)
         XCTAssertFalse(automation.shouldAutoStart(isRecording: false, lastManualStop: nil, now: t0))
     }
 
@@ -31,10 +33,52 @@ final class MeetingAutomationTests: XCTestCase {
         defaults.set(true, forKey: MeetingAutomation.autoStopKey)
         defaults.set(30.0, forKey: MeetingAutomation.endThresholdKey)
         defaults.set(120.0, forKey: MeetingAutomation.reminderIntervalKey)
+        defaults.set(5.0, forKey: MeetingAutomation.autoStopDelayKey)
+        defaults.set(0.0, forKey: MeetingAutomation.speechHoldKey)
         XCTAssertEqual(
             MeetingAutomation.load(from: defaults),
-            MeetingAutomation(autoStart: true, autoStop: true, endThreshold: 30, reminderInterval: 120)
+            MeetingAutomation(
+                autoStart: true, autoStop: true, endThreshold: 30, reminderInterval: 120,
+                autoStopDelay: 5, speechHold: 0
+            )
         )
+    }
+
+    /// Auto stop: the detector debounces 3 s, the warning takes the rest of the delay.
+    func testAutoStopDelaySplitsBetweenDetectorAndWarning() {
+        let auto = MeetingAutomation(autoStop: true, endThreshold: 30, reminderInterval: 120)
+        XCTAssertEqual(auto.detectorThreshold, 3)
+        XCTAssertEqual(auto.waitAfterReminder, 7)
+        let short = MeetingAutomation(autoStop: true, autoStopDelay: 2)
+        XCTAssertEqual(short.detectorThreshold, 2)
+        XCTAssertEqual(short.waitAfterReminder, 0)
+        let notify = MeetingAutomation(endThreshold: 30, reminderInterval: 120)
+        XCTAssertEqual(notify.detectorThreshold, 30)
+        XCTAssertEqual(notify.waitAfterReminder, 120)
+    }
+
+    func testCallBackSoonAfterAutoStopRecordsAgain() {
+        let off = MeetingAutomation()
+        XCTAssertTrue(off.shouldAutoStart(isRecording: false, lastManualStop: nil, lastAutoStop: t0, now: at(30)))
+        XCTAssertFalse(off.shouldAutoStart(isRecording: false, lastManualStop: nil, lastAutoStop: t0, now: at(120)))
+        XCTAssertFalse(off.shouldAutoStart(isRecording: true, lastManualStop: nil, lastAutoStop: t0, now: at(30)))
+        // Stopped by hand after the restart: the user's stop wins.
+        XCTAssertFalse(off.shouldAutoStart(isRecording: false, lastManualStop: at(20), lastAutoStop: t0, now: at(30)))
+        // A manual stop older than the auto stop does not block the restart.
+        let on = MeetingAutomation(autoStart: true)
+        XCTAssertTrue(on.shouldAutoStart(isRecording: false, lastManualStop: at(-10), lastAutoStop: t0, now: at(30)))
+    }
+
+    func testSpeechHoldOffDoesNotPostponeAutoStop() {
+        let auto = MeetingAutomation(autoStop: true, speechHold: 0)
+        XCTAssertEqual(auto.afterMeetingEnded(lastReminder: t0, lastSpeech: at(7), now: at(7)), .stop)
+    }
+
+    func testDictationDoesNotHoldTheMeeting() {
+        XCTAssertNil(MeetingAutomation.meetingSpeech(lastMicSpeech: at(5), dictating: true, lastDictationEnd: nil))
+        XCTAssertNil(MeetingAutomation.meetingSpeech(lastMicSpeech: at(5), dictating: false, lastDictationEnd: at(4.5)))
+        XCTAssertEqual(MeetingAutomation.meetingSpeech(lastMicSpeech: at(9), dictating: false, lastDictationEnd: at(4.5)), at(9))
+        XCTAssertEqual(MeetingAutomation.meetingSpeech(lastMicSpeech: at(9), dictating: false, lastDictationEnd: nil), at(9))
     }
 
     func testAutoStartOnlyWhenEnabledAndIdle() {
@@ -64,20 +108,20 @@ final class MeetingAutomationTests: XCTestCase {
     }
 
     func testAutoStopWarnsFirstAndStopsAfterOneInterval() {
-        let auto = MeetingAutomation(autoStop: true)
+        let auto = MeetingAutomation(autoStop: true, autoStopDelay: 63)
         XCTAssertEqual(auto.afterMeetingEnded(lastReminder: nil, lastSpeech: nil, now: t0), .remind)
         XCTAssertEqual(auto.afterMeetingEnded(lastReminder: t0, lastSpeech: nil, now: at(30)), .none)
         XCTAssertEqual(auto.afterMeetingEnded(lastReminder: t0, lastSpeech: nil, now: at(60)), .stop)
     }
 
     func testSpeechPostponesAutoStop() {
-        let auto = MeetingAutomation(autoStop: true)
+        let auto = MeetingAutomation(autoStop: true, autoStopDelay: 63)
         XCTAssertEqual(auto.afterMeetingEnded(lastReminder: t0, lastSpeech: at(58), now: at(60)), .none)
         XCTAssertEqual(auto.afterMeetingEnded(lastReminder: t0, lastSpeech: at(58), now: at(70)), .stop)
     }
 
     func testCountdownReachesZeroWhenTheLoopStops() {
-        let auto = MeetingAutomation(autoStop: true, reminderInterval: 30)
+        let auto = MeetingAutomation(autoStop: true, autoStopDelay: 33)
         func left(_ speech: Date?, _ now: TimeInterval) -> Int? {
             auto.endedIndicator(tick: 0, lastReminder: t0, lastSpeech: speech, now: at(now), reduceMotion: false).secondsLeft
         }
