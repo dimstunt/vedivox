@@ -115,8 +115,12 @@ Defaults** brings everything back.
   the next. The meeting counts as ended once the call has not used the mic for **Meeting
   counts as ended after** (15 s); the reminder then repeats every **Reminder interval** (1 min)
   until the call comes back or the recording stops, and waits while your mic hears speech.
-  The auto stop warns first and stops one reminder interval later, again not while your mic
-  hears speech — a room change or a reconnect does not cut the recording. While Vedivox waits after
+  The auto stop has one setting instead, **Stop recording after** (10 s from the call going
+  quiet): it warns with a countdown first, and a call that comes back within 2 minutes records
+  again on its own, even with the auto start off — a room change or a reconnect costs a split
+  recording, which **Merge** joins. **Wait after speech** (10 s) holds the repeat reminder and the
+  auto stop while your mic heard you that recently; **Off** stops on time. A dictation does not
+  count as speech here. While Vedivox waits after
   the call, the menu bar icon blinks (steady with Reduce Motion) and, with the auto stop on, shows
   the seconds left. To go on without the call, choose **Keep Recording** — the reminder's button
   or the first item of the menu bar menu: no more reminders and no auto stop until the next call is

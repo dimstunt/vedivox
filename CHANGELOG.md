@@ -5,6 +5,17 @@ What changed in Vedivox, newest first. The non-obvious controls are described in
 
 ## Unreleased
 
+### Changed
+
+- **The auto stop comes 10 s after the call, not ~80 s**: with **When a meeting ends → Stop
+  recording**, one setting, **Stop recording after** (5 s – 2 min), replaces the end threshold
+  plus one reminder interval. A call that comes back within 2 minutes of an auto stop records
+  again, even with the auto start off. Around a call in Zoom, Slack, Teams or the Telemost app
+  the detector looks every second instead of every 5 s (browser calls stay at 5 s). If you had
+  the auto stop on, check the new setting.
+- **Wait after speech** is a setting (was a fixed 10 s; **Off** turns it off, `meetingEndSpeechHold`
+  in `defaults`), and a dictation no longer holds the auto stop as if it were the conversation.
+
 ### Added
 
 - **Listen finds unnamed regulars**: a voice that sounds like no one you know but speaks in three
